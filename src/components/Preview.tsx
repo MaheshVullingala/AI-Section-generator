@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { buildStandalonePage } from "@/lib/export";
 import type { Breakpoint, DesignSystem, SectionCode } from "@/lib/types";
 import { sortBreakpoints } from "./BreakpointEditor";
@@ -9,25 +9,60 @@ import { cx } from "./ui";
 // The iframe is sandboxed without allow-same-origin, so postMessage is the only channel.
 const HEIGHT_REPORTER = `<script>(function(){var id=window.name;function s(){parent.postMessage({sgFrame:id,height:document.documentElement.scrollHeight},"*")}new ResizeObserver(s).observe(document.documentElement);window.addEventListener("load",s);s();})();</script>`;
 
-function Frame({ srcDoc, width, maxWidth, maxHeight }: { srcDoc: string; width: number; maxWidth: number; maxHeight?: number }) {
+// In edit mode: clicks select the nearest [data-sg-id] element instead of interacting,
+// hovered elements get a dashed outline, and the parent can highlight the selection.
+const EDITOR_SCRIPT = `<style>*,*::before,*::after{animation:none!important;transition:none!important}[data-sg-reveal]{opacity:1!important;transform:none!important}[data-sg-id]{cursor:default}[data-sg-id]:hover{outline:1px dashed #6366f1!important;outline-offset:-1px}.sg-selected{outline:2px solid #4f46e5!important;outline-offset:-2px}</style><script>(function(){var id=window.name;
+document.addEventListener("click",function(e){var el=e.target.closest&&e.target.closest("[data-sg-id]");e.preventDefault();e.stopPropagation();if(el)parent.postMessage({sgFrame:id,select:el.getAttribute("data-sg-id")},"*")},true);
+["submit","keydown"].forEach(function(t){document.addEventListener(t,function(e){if(t==="submit"||e.key==="Enter")e.preventDefault()},true)});
+window.addEventListener("message",function(e){if(!e.data||e.data.sgSelect===undefined)return;document.querySelectorAll(".sg-selected").forEach(function(x){x.classList.remove("sg-selected")});var el=e.data.sgSelect&&document.querySelector('[data-sg-id="'+e.data.sgSelect+'"]');if(el){el.classList.add("sg-selected")}});
+parent.postMessage({sgFrame:id,ready:true},"*");})();</script>`;
+
+interface EditorBinding {
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}
+
+function Frame({
+  srcDoc,
+  width,
+  maxWidth,
+  maxHeight,
+  editor,
+}: {
+  srcDoc: string;
+  width: number;
+  maxWidth: number;
+  maxHeight?: number;
+  editor?: EditorBinding;
+}) {
   const name = `sgf-${useId().replace(/[^a-zA-Z0-9]/g, "")}`;
+  const ref = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(400);
+  const selectedId = editor?.selectedId ?? null;
+  const onSelect = editor?.onSelect;
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
-      if (e.data && e.data.sgFrame === name && typeof e.data.height === "number") setHeight(Math.min(e.data.height, 6000));
+      if (!e.data || e.data.sgFrame !== name) return;
+      if (typeof e.data.height === "number") setHeight(Math.min(e.data.height, 6000));
+      if (typeof e.data.select === "string") onSelect?.(e.data.select);
+      if (e.data.ready) ref.current?.contentWindow?.postMessage({ sgSelect: selectedId }, "*");
     };
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
-  }, [name]);
+  }, [name, onSelect, selectedId]);
+  useEffect(() => {
+    ref.current?.contentWindow?.postMessage({ sgSelect: selectedId }, "*");
+  }, [selectedId]);
   const scale = Math.min(1, maxWidth / width);
   const h = maxHeight ? Math.min(height, maxHeight) : height;
   return (
     <div style={{ width: width * scale, height: h * scale }} className="relative overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
       <iframe
+        ref={ref}
         name={name}
         title="Section preview"
         sandbox="allow-scripts allow-popups allow-forms"
-        srcDoc={srcDoc.replace("</body>", `${HEIGHT_REPORTER}</body>`)}
+        srcDoc={(editor ? srcDoc.replace("<body>", "<body><script>window.SG_EDITOR=1</script>") : srcDoc).replace("</body>", `${HEIGHT_REPORTER}${editor ? EDITOR_SCRIPT : ""}</body>`)}
         style={{ width, height: h, transform: `scale(${scale})`, transformOrigin: "top left" }}
         className="absolute left-0 top-0 border-0"
       />
@@ -41,12 +76,17 @@ export function Preview({
   rootClass,
   breakpoints,
   compact,
+  editor,
+  toolbarExtra,
 }: {
   code: SectionCode;
   designSystem: DesignSystem;
   rootClass: string;
   breakpoints: Breakpoint[];
   compact?: boolean;
+  /** When set, clicking in the preview selects elements instead of interacting with them. */
+  editor?: EditorBinding;
+  toolbarExtra?: ReactNode;
 }) {
   const bps = sortBreakpoints(breakpoints);
   const [mode, setMode] = useState<"single" | "all">("single");
@@ -73,6 +113,7 @@ export function Preview({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
+        {toolbarExtra}
         {bps.map((b) => (
           <button
             key={b.name + b.width}
@@ -108,7 +149,7 @@ export function Preview({
       <div ref={wrapRef} className="w-full overflow-x-auto rounded-xl bg-slate-100 p-3">
         {mode === "single" ? (
           <div className="flex justify-center">
-            <Frame srcDoc={srcDoc} width={width} maxWidth={avail - 24} />
+            <Frame srcDoc={srcDoc} width={width} maxWidth={avail - 24} editor={editor} />
           </div>
         ) : (
           <div className="flex items-start gap-4">
@@ -117,7 +158,7 @@ export function Preview({
                 <p className="text-xs font-medium text-slate-600">
                   {b.name} · {b.width}px
                 </p>
-                <Frame srcDoc={srcDoc} width={b.width} maxWidth={Math.max(220, b.width * 0.4)} />
+                <Frame srcDoc={srcDoc} width={b.width} maxWidth={Math.max(220, b.width * 0.4)} editor={editor} />
               </div>
             ))}
           </div>

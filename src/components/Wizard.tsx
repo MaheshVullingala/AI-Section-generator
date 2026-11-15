@@ -1,27 +1,17 @@
 "use client";
 import { useEffect, useState } from "react";
 import { BUSINESS_TYPES, INTERACTIONS, SECTION_TYPES, questionsFor } from "@/lib/catalog";
-import { fixIssuesInstruction } from "@/lib/check";
 import * as store from "@/lib/storage";
 import { DRAFT_DS_ID, emptyDesignSystem, uid } from "@/lib/tokens";
-import type { DesignSystem, SavedSection, SectionCode, SectionSpec, SectionVersion, Variant } from "@/lib/types";
+import type { DesignSystem, SavedSection, SectionSpec, Variant } from "@/lib/types";
 import { BreakpointEditor, sortBreakpoints } from "./BreakpointEditor";
 import { DesignSystemEditor } from "./DesignSystemEditor";
-import { ExportPanel } from "./ExportPanel";
+import { makeVersion, SectionEditor } from "./editor/SectionEditor";
 import { Preview } from "./Preview";
 import { Button, Card, Chip, Field, Input, Select, Spinner, Textarea, cx } from "./ui";
 
 const STEPS = ["Design system", "Business", "Section", "Content", "Breakpoints", "Review", "Choose design", "Refine & export"];
 
-const QUICK_ACTIONS = [
-  "Improve the mobile layout",
-  "Increase contrast and readability",
-  "Tighten spacing",
-  "Add tasteful motion",
-  "Run an accessibility pass and fix issues",
-  "Make the copy shorter and punchier",
-  "Make the primary CTA more prominent",
-];
 
 function emptySpec(ds: DesignSystem): SectionSpec {
   return {
@@ -38,9 +28,6 @@ function emptySpec(ds: DesignSystem): SectionSpec {
   };
 }
 
-function makeVersion(code: SectionCode, instruction: string, issues: string[] = []): SectionVersion {
-  return { id: uid("v"), html: code.html, css: code.css, js: code.js, instruction, issues, createdAt: Date.now() };
-}
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -62,9 +49,6 @@ export function Wizard() {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
   const [section, setSection] = useState<SavedSection | null>(null);
-  const [versionIdx, setVersionIdx] = useState(0);
-  const [instruction, setInstruction] = useState("");
-  const [refining, setRefining] = useState(false);
   const [saved, setSaved] = useState<SavedSection[]>([]);
 
   useEffect(() => {
@@ -126,43 +110,13 @@ export function Wizard() {
       title: `${spec.sectionType}: ${v.name}`,
       designSystemId: ds.id,
       spec,
-      versions: [makeVersion(v, `Picked "${v.name}" (${v.direction})`, v.issues)],
+      versions: [makeVersion(v, `Picked "${v.name}" (${v.direction})`, v.issues, v.scene)],
       updatedAt: 0, // set when saved
     };
     setSection(s);
-    setVersionIdx(0);
     store.saveSection(s);
     setSaved(store.listSections());
     go(7);
-  };
-
-  const refine = async (text: string) => {
-    if (!section || !text.trim()) return;
-    const current = section.versions[versionIdx];
-    setRefining(true);
-    setError("");
-    try {
-      const { section: next, issues } = await postJson<{ section: SectionCode & { rationale: string }; issues: string[] }>("/api/refine", {
-        designSystem: ds,
-        spec: section.spec,
-        rootClass: section.id,
-        current: { html: current.html, css: current.css, js: current.js },
-        instruction: text,
-      });
-      const version = makeVersion(next, text.startsWith("Fix these issues") ? "Fix quality-check issues" : text, issues);
-      // Editing from an older version drops the versions after it, like undo/redo.
-      const versions = [...section.versions.slice(0, versionIdx + 1), version];
-      const updated = { ...section, versions };
-      setSection(updated);
-      setVersionIdx(versions.length - 1);
-      store.saveSection(updated);
-      setSaved(store.listSections());
-      setInstruction("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setRefining(false);
-    }
   };
 
   const openSaved = (s: SavedSection) => {
@@ -170,7 +124,6 @@ export function Wizard() {
     if (sys) setDs(sys);
     setSpec(s.spec);
     setSection(s);
-    setVersionIdx(s.versions.length - 1);
     go(7);
   };
 
@@ -465,69 +418,17 @@ export function Wizard() {
       )}
 
       {step === 7 && section && (
-        <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
-          <div className="min-w-0 space-y-4">
-            <Preview code={section.versions[versionIdx]} designSystem={ds} rootClass={section.id} breakpoints={section.spec.breakpoints} />
-            <ExportPanel code={section.versions[versionIdx]} designSystem={ds} rootClass={section.id} title={section.title} />
-          </div>
-          <aside className="space-y-4">
-            {!!section.versions[versionIdx].issues?.length && (
-              <Card className="space-y-3">
-                <Issues issues={section.versions[versionIdx].issues!} />
-                <Button variant="secondary" className="w-full" disabled={refining} onClick={() => refine(fixIssuesInstruction(section.versions[versionIdx].issues!))}>
-                  {refining && <Spinner />} Fix these with Claude
-                </Button>
-              </Card>
-            )}
-            <Card className="space-y-3">
-              <h3 className="font-semibold text-slate-900">Refine</h3>
-              <div className="flex flex-wrap gap-1.5">
-                {QUICK_ACTIONS.map((a) => (
-                  <button
-                    key={a}
-                    disabled={refining}
-                    onClick={() => refine(a)}
-                    className="rounded-full border border-slate-300 px-2.5 py-1 text-xs text-slate-700 hover:border-indigo-400 disabled:opacity-50"
-                  >
-                    {a}
-                  </button>
-                ))}
-              </div>
-              <Textarea
-                value={instruction}
-                onChange={(e) => setInstruction(e.target.value)}
-                placeholder="Describe a change, e.g. add a yearly billing toggle with a 20% discount badge"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) refine(instruction);
-                }}
-              />
-              <Button onClick={() => refine(instruction)} disabled={refining || !instruction.trim()} className="w-full">
-                {refining && <Spinner />} {refining ? "Applying change…" : "Apply change"}
-              </Button>
-            </Card>
-            <Card className="space-y-2">
-              <h3 className="font-semibold text-slate-900">Versions</h3>
-              <ol className="space-y-1">
-                {section.versions.map((v, i) => (
-                  <li key={v.id}>
-                    <button
-                      onClick={() => setVersionIdx(i)}
-                      className={cx(
-                        "w-full rounded-md px-2 py-1.5 text-left text-sm",
-                        i === versionIdx ? "bg-indigo-50 text-indigo-800" : "text-slate-700 hover:bg-slate-50",
-                      )}
-                    >
-                      <span className="font-medium">v{i + 1}</span> · {v.instruction}
-                    </button>
-                  </li>
-                ))}
-              </ol>
-            </Card>
-            <Button variant="secondary" className="w-full" onClick={() => go(6)} disabled={!variants.length}>
-              Back to the 3 designs
-            </Button>
-          </aside>
-        </div>
+        <SectionEditor
+          key={section.id}
+          section={section}
+          designSystem={ds}
+          onChange={(updated) => {
+            setSection(updated);
+            store.saveSection(updated);
+            setSaved(store.listSections());
+          }}
+          onBackToVariants={variants.length ? () => go(6) : undefined}
+        />
       )}
     </div>
   );

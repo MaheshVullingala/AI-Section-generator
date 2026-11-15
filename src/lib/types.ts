@@ -1,3 +1,5 @@
+import type { Scene } from "./scene/types";
+
 export interface Breakpoint {
   name: string;
   width: number; // px
@@ -74,11 +76,14 @@ export interface Variant extends SectionCode {
   direction: string;
   name: string;
   rationale: string;
+  scene: Scene;
   issues: string[]; // results of the static quality check
 }
 
 export interface SectionVersion extends SectionCode {
   id: string;
+  /** The editable design. Absent only on sections saved before the visual editor existed. */
+  scene?: Scene;
   instruction: string; // what produced this version
   issues?: string[]; // results of the static quality check
   createdAt: number;

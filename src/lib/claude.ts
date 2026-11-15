@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { SectionCode } from "./types";
+import type { Scene } from "./scene/types";
+import { parseSceneJson } from "./scene/validate";
 
 // Server-only. The API key is read from ANTHROPIC_API_KEY and never sent to the browser.
 let client: Anthropic | null = null;
@@ -58,15 +59,11 @@ function tag(text: string, name: string): string {
 }
 
 /** Parses the tagged response format defined in the system prompt. */
-export function parseSection(text: string): SectionCode & { name: string; rationale: string } {
-  // <html> may itself contain tags, so take everything up to the last </html>.
-  const htmlStart = text.indexOf("<html>");
-  const htmlEnd = text.lastIndexOf("</html>");
-  const html = htmlStart >= 0 && htmlEnd > htmlStart ? text.slice(htmlStart + 6, htmlEnd).trim() : "";
-  const css = tag(text.slice(Math.max(htmlEnd, 0)), "css").replace(/^<style[^>]*>|<\/style>$/g, "").trim();
-  const js = tag(text.slice(Math.max(htmlEnd, 0)), "js").replace(/^<script[^>]*>|<\/script>$/g, "").trim();
-  if (!html) throw new Error("Claude's response did not contain any HTML.");
-  return { name: tag(text, "name") || "Untitled design", rationale: tag(text, "rationale"), html, css, js };
+export function parseSceneResponse(text: string): { name: string; rationale: string; scene: Scene } {
+  const start = text.indexOf("<scene>");
+  const end = text.lastIndexOf("</scene>");
+  const body = start >= 0 && end > start ? text.slice(start + 7, end) : text;
+  return { name: tag(text, "name") || "Untitled design", rationale: tag(text, "rationale"), scene: parseSceneJson(body) };
 }
 
 export function errorMessage(err: unknown): { message: string; status: number } {
@@ -77,6 +74,7 @@ export function errorMessage(err: unknown): { message: string; status: number } 
   if (err instanceof Anthropic.APIError) return { message: `Anthropic API error (${err.status}): ${err.message}`, status: 502 };
   if (err instanceof Error && /authentication method/i.test(err.message))
     return { message: "No Anthropic API key found. Add ANTHROPIC_API_KEY to .env.local (or your Vercel project settings) and restart.", status: 500 };
+  if (err instanceof SyntaxError) return { message: "Claude returned a design that couldn't be read. Please try again.", status: 502 };
   if (err instanceof Error) return { message: err.message, status: 500 };
   return { message: "Unknown error", status: 500 };
 }

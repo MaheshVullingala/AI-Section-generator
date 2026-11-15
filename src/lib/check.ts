@@ -13,6 +13,37 @@ const INTERACTION_MARKERS: Record<string, { test: RegExp; where: "html" | "css" 
   "Filterable grid": { test: /aria-pressed|aria-live/, where: "html" },
 };
 
+/** Splits a selector list on commas that aren't inside parentheses, e.g. ":where(h1,h2)". */
+function splitTopLevel(list: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of list) {
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    if (ch === "," && depth === 0) {
+      out.push(cur);
+      cur = "";
+    } else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
+/** Interaction name -> behavior type, for code compiled from a structured design. */
+const INTERACTION_BEHAVIOR: Record<string, string> = {
+  Tabs: "tabs",
+  Accordion: "accordion",
+  "Carousel / slider": "carousel",
+  "Toggle (e.g. monthly / yearly)": "toggle",
+  "Animated counters": "counter",
+  "Scroll reveal animations": "reveal",
+  "Modal / lightbox": "modal",
+  "Filterable grid": "filter",
+  "Before / after comparison": "compare",
+  "Parallax / depth": "parallax",
+};
+
 function unscopedSelectors(css: string, rootClass: string): string[] {
   const clean = css
     .replace(/\/\*[\s\S]*?\*\//g, "")
@@ -24,7 +55,7 @@ function unscopedSelectors(css: string, rootClass: string): string[] {
   while ((m = re.exec(clean))) {
     const prelude = m[1].trim();
     if (!prelude || prelude.startsWith("@")) continue;
-    for (const sel of prelude.split(",")) {
+    for (const sel of splitTopLevel(prelude)) {
       const s = sel.trim();
       if (s && !s.startsWith(`.${rootClass}`)) bad.push(s);
     }
@@ -56,7 +87,16 @@ export function checkSection(code: SectionCode, rootClass: string, spec: Section
   }
   if (/lorem ipsum/i.test(all)) issues.push("The section contains lorem ipsum placeholder text.");
 
+  const fromScene = /data-sg-(behavior|part)=/.test(code.html);
   for (const interaction of spec.interactions) {
+    if (fromScene) {
+      const type = INTERACTION_BEHAVIOR[interaction];
+      const builtWithCss = interaction === "Accordion" && /<details/.test(code.html);
+      if (type && !code.html.includes(`data-sg-behavior="${type}"`) && !builtWithCss && spec.constraints.allowJs) {
+        issues.push(`The requested "${interaction}" interaction doesn't appear to be implemented.`);
+      }
+      continue;
+    }
     const marker = INTERACTION_MARKERS[interaction];
     if (!marker) continue;
     if (!spec.constraints.allowJs && !marker.cssOnlyOk) continue;
