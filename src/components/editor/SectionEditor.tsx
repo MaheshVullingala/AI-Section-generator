@@ -1,5 +1,6 @@
 "use client";
-import { useCallback, useMemo, useState } from "react";
+import { authHeaders } from "@/lib/supabase";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { checkSection, fixIssuesInstruction } from "@/lib/check";
 import { compileScene } from "@/lib/scene/compile";
 import { duplicateNode, findNode, findParent, moveNode, removeNode, updateNode } from "@/lib/scene/ops";
@@ -27,7 +28,7 @@ export function makeVersion(code: SectionCode, instruction: string, issues: stri
 }
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) }, body: JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data as { error?: string }).error || `Request failed (${res.status})`);
   return data as T;
@@ -56,12 +57,20 @@ export function SectionEditor({
   onChange,
   onBackToVariants,
   initialVersion,
+  hideRefinePanel,
+  onWorkingSceneChange,
+  onSelectionChange,
 }: {
   section: SavedSection;
   designSystem: DesignSystem;
   onChange: (s: SavedSection) => void;
   onBackToVariants?: () => void;
   initialVersion?: number;
+  /** When a chat drives refinements, the built-in refine panel is hidden. */
+  hideRefinePanel?: boolean;
+  /** Reports the design on screen, including unsaved edits. */
+  onWorkingSceneChange?: (scene: Scene | undefined) => void;
+  onSelectionChange?: (id: string | null) => void;
 }) {
   const [versionIdx, setVersionIdx] = useState(initialVersion ?? section.versions.length - 1);
   const [history, setHistory] = useState<Scene[]>([]); // draft states; last is current
@@ -82,6 +91,9 @@ export function SectionEditor({
   const editorCode = useMemo<SectionCode | null>(() => (scene ? compileScene(scene, { rootClass, editor: true }) : null), [scene, rootClass]);
   const issues = useMemo(() => (dirty ? checkSection(code, rootClass, section.spec) : (version.issues ?? [])), [dirty, code, rootClass, section.spec, version.issues]);
   const selected = scene && selectedId ? findNode(scene, selectedId) : null;
+
+  useEffect(() => onWorkingSceneChange?.(scene), [scene, onWorkingSceneChange]);
+  useEffect(() => onSelectionChange?.(selected ? selected.id : null), [selected, onSelectionChange]);
 
   const edit = (next: Scene) => {
     setHistory((h) => [...h.slice(-49), next]);
@@ -217,6 +229,7 @@ export function SectionEditor({
           </Card>
         )}
 
+        {!hideRefinePanel && (
         <div className="flex gap-1 rounded-lg bg-slate-200 p-1" role="tablist">
           {(
             [
@@ -235,8 +248,9 @@ export function SectionEditor({
             </button>
           ))}
         </div>
+        )}
 
-        {panel === "design" && scene && (
+        {(panel === "design" || hideRefinePanel) && scene && (
           <>
             <Card className="space-y-2 p-3">
               <h3 className="text-sm font-semibold text-slate-900">Layers</h3>
@@ -270,7 +284,7 @@ export function SectionEditor({
           </>
         )}
 
-        {(panel === "refine" || !scene) && (
+        {!hideRefinePanel && (panel === "refine" || !scene) && (
           <Card className="space-y-3">
             <div className="flex flex-wrap gap-1.5">
               {QUICK_ACTIONS.map((a) => (
@@ -315,7 +329,7 @@ export function SectionEditor({
         </Card>
         {onBackToVariants && (
           <Button variant="secondary" className="w-full" onClick={onBackToVariants}>
-            Back to the 3 designs
+            See the 3 options again
           </Button>
         )}
       </aside>
