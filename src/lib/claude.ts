@@ -17,38 +17,69 @@ export const REFINE_EFFORT = (process.env.CLAUDE_REFINE_EFFORT || "medium") as E
 
 export class ClaudeRefusal extends Error {}
 
+export interface PromptImage {
+  mediaType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+  data: string; // base64, no data: prefix
+}
+
+/** Converts browser data: URLs into image blocks; anything else is dropped. */
+export function imagesFromDataUrls(urls: string[]): PromptImage[] {
+  const out: PromptImage[] = [];
+  for (const u of urls.slice(0, 6)) {
+    const m = u.match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=]+)$/);
+    if (m) out.push({ mediaType: m[1] as PromptImage["mediaType"], data: m[2] });
+  }
+  return out;
+}
+
 /**
- * Streams a single request and returns the final text.
+ * Streams a request and returns the final text.
  * Server-side fallbacks re-run the request on another model if a safety
  * classifier declines it (a false positive is possible on design prompts).
+ * With webFetch, Claude can open reference links the user shared.
  */
 export async function complete(opts: {
   model: string;
   effort: Effort;
   system: string;
   prompt: string;
+  images?: PromptImage[];
+  webFetch?: boolean;
   maxTokens?: number;
 }): Promise<string> {
-  const stream = getClient().beta.messages.stream({
-    model: opts.model,
-    max_tokens: opts.maxTokens ?? 64000,
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
-    output_config: { effort: opts.effort },
-    // The system prompt is identical across requests, so cache it.
-    system: [{ type: "text", text: opts.system, cache_control: { type: "ephemeral" } }],
-    messages: [{ role: "user", content: opts.prompt }],
-  });
-  const message = await stream.finalMessage();
-  if (message.stop_reason === "refusal") {
-    throw new ClaudeRefusal("Claude declined this request. Try rephrasing the brief.");
-  }
+  const content: Anthropic.Beta.BetaContentBlockParam[] = [
+    ...(opts.images ?? []).map(
+      (img): Anthropic.Beta.BetaContentBlockParam => ({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } }),
+    ),
+    { type: "text", text: opts.prompt },
+  ];
+  const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content }];
   let text = "";
-  for (const block of message.content) {
-    if (block.type === "text") text += block.text;
-  }
-  if (message.stop_reason === "max_tokens") {
-    throw new Error("The response was cut off before it finished. Try a simpler brief.");
+  // A server tool (web fetch) can pause a long turn; resume it a few times.
+  for (let turn = 0; turn < 4; turn++) {
+    const stream = getClient().beta.messages.stream({
+      model: opts.model,
+      max_tokens: opts.maxTokens ?? 64000,
+      betas: ["server-side-fallback-2026-07-01"],
+      fallbacks: "default",
+      output_config: { effort: opts.effort },
+      // The system prompt is identical across requests, so cache it.
+      system: [{ type: "text", text: opts.system, cache_control: { type: "ephemeral" } }],
+      ...(opts.webFetch ? { tools: [{ type: "web_fetch_20260209" as const, name: "web_fetch" as const, max_uses: 4 }] } : {}),
+      messages,
+    });
+    const message = await stream.finalMessage();
+    if (message.stop_reason === "refusal") {
+      throw new ClaudeRefusal("Claude declined this request. Try rephrasing it.");
+    }
+    for (const block of message.content) {
+      if (block.type === "text") text += block.text;
+    }
+    if (message.stop_reason === "max_tokens") {
+      throw new Error("The response was cut off before it finished. Try a simpler request.");
+    }
+    if (message.stop_reason !== "pause_turn") break;
+    messages.push({ role: "assistant", content: message.content as Anthropic.Beta.BetaContentBlockParam[] });
   }
   return text;
 }
