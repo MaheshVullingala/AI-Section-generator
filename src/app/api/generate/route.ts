@@ -1,4 +1,5 @@
 import { VARIANT_DIRECTIONS } from "@/lib/catalog";
+import { checkSection } from "@/lib/check";
 import { complete, errorMessage, GENERATE_EFFORT, GENERATE_MODEL, parseSection } from "@/lib/claude";
 import { SYSTEM_PROMPT, variantPrompt } from "@/lib/prompts";
 import { uid } from "@/lib/tokens";
@@ -20,7 +21,8 @@ export async function POST(request: Request) {
         system: SYSTEM_PROMPT,
         prompt: variantPrompt(designSystem, spec, rootClass, direction),
       });
-      return { id: rootClass, direction: direction.label, ...parseSection(text) };
+      const section = parseSection(text);
+      return { id: rootClass, direction: direction.label, ...section, issues: checkSection(section, rootClass, spec) };
     }),
   );
 

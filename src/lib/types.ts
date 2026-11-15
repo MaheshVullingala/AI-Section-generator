@@ -74,11 +74,13 @@ export interface Variant extends SectionCode {
   direction: string;
   name: string;
   rationale: string;
+  issues: string[]; // results of the static quality check
 }
 
 export interface SectionVersion extends SectionCode {
   id: string;
   instruction: string; // what produced this version
+  issues?: string[]; // results of the static quality check
   createdAt: number;
 }
 

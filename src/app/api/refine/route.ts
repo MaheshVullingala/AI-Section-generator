@@ -1,3 +1,4 @@
+import { checkSection } from "@/lib/check";
 import { complete, errorMessage, parseSection, REFINE_EFFORT, REFINE_MODEL } from "@/lib/claude";
 import { refinePrompt, SYSTEM_PROMPT } from "@/lib/prompts";
 import type { DesignSystem, SectionCode, SectionSpec } from "@/lib/types";
@@ -23,7 +24,8 @@ export async function POST(request: Request) {
       system: SYSTEM_PROMPT,
       prompt: refinePrompt(designSystem, spec, rootClass, current, instruction),
     });
-    return Response.json({ section: parseSection(text) });
+    const section = parseSection(text);
+    return Response.json({ section, issues: checkSection(section, rootClass, spec) });
   } catch (err) {
     const { message, status } = errorMessage(err);
     return Response.json({ error: message }, { status });

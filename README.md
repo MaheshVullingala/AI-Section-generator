@@ -17,6 +17,10 @@ An internal tool for designing interactive website sections with Claude. Load yo
 
 Every section is a single `<section>` with scoped CSS (all selectors start with a unique root class) and optional vanilla JS in an IIFE. It uses your tokens as CSS variables, is mobile-first with `min-width` media queries at your breakpoints, and respects `prefers-reduced-motion`. No frameworks or external libraries, so it pastes into WordPress, Webflow, Shopify, HubSpot or plain HTML.
 
+The system prompt (`src/lib/prompts.ts`) sets concrete patterns for each interaction (tabs, accordions, carousels, toggles, counters, scroll reveals, modals and more), including keyboard support, ARIA and progressive enhancement. Each business type comes with interaction guidance (`src/lib/catalog.ts`), and the three variants use different motion levels: subtle, expressive and rich.
+
+After each generation, a quick static check (`src/lib/check.ts`) flags unscoped CSS, missing focus styles, missing reduced-motion handling, unscoped JS and requested interactions that weren't built. Issues show on the design card, and one click asks Claude to fix them.
+
 ## Setup
 
 Requires Node.js 20+.

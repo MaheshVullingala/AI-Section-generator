@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { BUSINESS_TYPES, INTERACTIONS, SECTION_TYPES, questionsFor } from "@/lib/catalog";
+import { fixIssuesInstruction } from "@/lib/check";
 import * as store from "@/lib/storage";
 import { DRAFT_DS_ID, emptyDesignSystem, uid } from "@/lib/tokens";
 import type { DesignSystem, SavedSection, SectionCode, SectionSpec, SectionVersion, Variant } from "@/lib/types";
@@ -37,8 +38,8 @@ function emptySpec(ds: DesignSystem): SectionSpec {
   };
 }
 
-function makeVersion(code: SectionCode, instruction: string): SectionVersion {
-  return { id: uid("v"), html: code.html, css: code.css, js: code.js, instruction, createdAt: Date.now() };
+function makeVersion(code: SectionCode, instruction: string, issues: string[] = []): SectionVersion {
+  return { id: uid("v"), html: code.html, css: code.css, js: code.js, instruction, issues, createdAt: Date.now() };
 }
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
@@ -125,7 +126,7 @@ export function Wizard() {
       title: `${spec.sectionType}: ${v.name}`,
       designSystemId: ds.id,
       spec,
-      versions: [makeVersion(v, `Picked "${v.name}" (${v.direction})`)],
+      versions: [makeVersion(v, `Picked "${v.name}" (${v.direction})`, v.issues)],
       updatedAt: 0, // set when saved
     };
     setSection(s);
@@ -141,14 +142,14 @@ export function Wizard() {
     setRefining(true);
     setError("");
     try {
-      const { section: next } = await postJson<{ section: { html: string; css: string; js: string; rationale: string } }>("/api/refine", {
+      const { section: next, issues } = await postJson<{ section: SectionCode & { rationale: string }; issues: string[] }>("/api/refine", {
         designSystem: ds,
         spec: section.spec,
         rootClass: section.id,
         current: { html: current.html, css: current.css, js: current.js },
         instruction: text,
       });
-      const version = makeVersion(next, text);
+      const version = makeVersion(next, text.startsWith("Fix these issues") ? "Fix quality-check issues" : text, issues);
       // Editing from an older version drops the versions after it, like undo/redo.
       const versions = [...section.versions.slice(0, versionIdx + 1), version];
       const updated = { ...section, versions };
@@ -446,6 +447,7 @@ export function Wizard() {
                   </div>
                   <Preview code={r.variant} designSystem={ds} rootClass={r.variant.id} breakpoints={spec.breakpoints} compact />
                   <p className="text-sm text-slate-600">{r.variant.rationale}</p>
+                  <Issues issues={r.variant.issues} />
                   <Button className="mt-auto" onClick={() => choose(r.variant)}>
                     Use this design
                   </Button>
@@ -469,6 +471,14 @@ export function Wizard() {
             <ExportPanel code={section.versions[versionIdx]} designSystem={ds} rootClass={section.id} title={section.title} />
           </div>
           <aside className="space-y-4">
+            {!!section.versions[versionIdx].issues?.length && (
+              <Card className="space-y-3">
+                <Issues issues={section.versions[versionIdx].issues!} />
+                <Button variant="secondary" className="w-full" disabled={refining} onClick={() => refine(fixIssuesInstruction(section.versions[versionIdx].issues!))}>
+                  {refining && <Spinner />} Fix these with Claude
+                </Button>
+              </Card>
+            )}
             <Card className="space-y-3">
               <h3 className="font-semibold text-slate-900">Refine</h3>
               <div className="flex flex-wrap gap-1.5">
@@ -538,6 +548,22 @@ function Nav({ back, next, nextLabel = "Continue", nextDisabled }: { back?: () =
           {nextLabel}
         </Button>
       )}
+    </div>
+  );
+}
+
+function Issues({ issues }: { issues: string[] }) {
+  if (!issues?.length) {
+    return <p className="text-xs font-medium text-emerald-700">✓ Passed scoping, accessibility and interaction checks</p>;
+  }
+  return (
+    <div className="rounded-md bg-amber-50 p-3 text-xs text-amber-900">
+      <p className="mb-1 font-semibold">Quality check found {issues.length} issue{issues.length > 1 ? "s" : ""}</p>
+      <ul className="list-disc space-y-0.5 pl-4">
+        {issues.map((i) => (
+          <li key={i}>{i}</li>
+        ))}
+      </ul>
     </div>
   );
 }

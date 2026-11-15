@@ -112,24 +112,65 @@ export function questionsFor(sectionType: string): Question[] {
   return [...common, ...(SECTION_TYPES[sectionType] ?? SECTION_TYPES.Custom)];
 }
 
-/** Creative directions used to make the 3 variants clearly different. */
+/** Interaction patterns that suit each business type, used to steer generation. */
+const INTERACTION_GUIDANCE: Record<string, string> = {
+  "SaaS / software":
+    "tabs or a stepper that walks through product features, a monthly/yearly pricing toggle, product UI screenshots that lift or reveal detail on hover, staggered scroll reveals, animated metrics for social proof.",
+  "E-commerce / retail":
+    "image swap or quick-view on product hover, colour/variant swatches that update the image, an add-to-cart micro-interaction, a swipeable product carousel, filter chips.",
+  "Agency / studio":
+    "bold, expressive hover reveals on work tiles, cursor-aware or layered depth effects on desktop, large typographic motion on scroll, a filterable case-study grid.",
+  "Restaurant / food & beverage":
+    "menu category tabs, an appetising image gallery with a lightbox, a sticky reserve CTA with a gentle pulse on hover, warm fade-in reveals.",
+  "Healthcare / clinic":
+    "calm, minimal motion; clear accordions for services and FAQs; large focus states; trust indicators that fade in. Avoid anything flashy.",
+  "Fintech / banking":
+    "animated counters and figures for trust, a calculator or toggle that shows outcomes, precise tabular data with hover highlighting, restrained and confident transitions.",
+  "Education / e-learning":
+    "course or curriculum tabs, accordions for modules, a progress or step timeline, hover previews on course cards.",
+  "Real estate":
+    "a swipeable property gallery with a lightbox, filter chips for listing types, hover details on listing cards, a before/after or map-style reveal.",
+  "Events / conferences":
+    "schedule tabs by day or track, a speaker grid with hover bios, a countdown or animated stats, a sticky register CTA.",
+  "Travel / hospitality":
+    "an immersive image carousel, destination cards with hover zoom and details, tabs for room or package types, parallax depth on desktop.",
+  "Fitness / wellness":
+    "energetic hover states on class or plan cards, a schedule filter, animated progress or stat counters, a membership toggle.",
+  "Non-profit":
+    "animated impact counters, a story carousel, donation amount toggles with clear selected states, warm scroll reveals.",
+  "Professional services (legal, consulting)":
+    "restrained hover states, service accordions, a process timeline that reveals step by step, testimonial carousel. Keep motion subtle and credible.",
+  "Mobile app":
+    "a device mockup that swaps screens via tabs or scroll, feature hover highlights, app-store CTA micro-interactions, animated ratings.",
+  "Hardware / physical product":
+    "hotspots or tabs that highlight product parts, a spec comparison toggle, a 360-style image carousel, before/after comparison.",
+};
+
+export function interactionGuidance(businessType: string): string {
+  return (
+    INTERACTION_GUIDANCE[businessType] ??
+    "interactions that make the content easier to explore (tabs, accordions, carousels) plus polished hover, focus and scroll-reveal feedback."
+  );
+}
+
+/** Creative directions used to make the 3 variants clearly different, including how much motion each uses. */
 export const VARIANT_DIRECTIONS = [
   {
     id: "clean",
     label: "Clean & conventional",
     brief:
-      "A polished, conventional layout that follows proven patterns for this business type. Prioritise clarity, scannability and conversion. Interactions are subtle and refined.",
+      "A polished, conventional layout that follows proven patterns for this business type. Prioritise clarity, scannability and conversion. Motion level: subtle. Refined hover and focus states, a light staggered scroll reveal, and every requested interaction implemented cleanly.",
   },
   {
     id: "editorial",
     label: "Bold & editorial",
     brief:
-      "A distinctive, editorial take: confident typographic hierarchy, generous whitespace or striking contrast, an unexpected but usable layout. Still strictly on-brand and using the tokens.",
+      "A distinctive, editorial take: confident typographic hierarchy, generous whitespace or striking contrast, an unexpected but usable layout. Motion level: expressive but purposeful. Typography and imagery animate in with character, hovers reveal extra detail, and every requested interaction is styled to match the editorial look. Still strictly on-brand and using the tokens.",
   },
   {
     id: "interactive",
     label: "Interaction-forward",
     brief:
-      "Lead with interactivity: the requested interactions are central to the experience, with smooth micro-interactions and motion that reward exploration, while staying fast and accessible.",
+      "Lead with interactivity: the requested interactions are the centrepiece of the experience, and you add the most fitting extra interaction from the business guidance. Motion level: rich. Layered micro-interactions, state changes that animate smoothly, and content that rewards exploration, while staying fast, keyboard friendly and fully usable with reduced motion.",
   },
 ];
