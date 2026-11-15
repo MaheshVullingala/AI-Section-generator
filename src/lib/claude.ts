@@ -5,7 +5,9 @@ import { parseSceneJson } from "./scene/validate";
 // Server-only. The API key is read from ANTHROPIC_API_KEY and never sent to the browser.
 let client: Anthropic | null = null;
 export function getClient(): Anthropic {
-  if (!client) client = new Anthropic();
+  // Streams send headers quickly, so this mostly catches requests that can't connect
+  // (e.g. a blocked network or proxy) instead of hanging for many minutes.
+  if (!client) client = new Anthropic({ timeout: 120_000, maxRetries: 1 });
   return client;
 }
 
@@ -102,6 +104,10 @@ export function errorMessage(err: unknown): { message: string; status: number } 
   if (err instanceof Anthropic.AuthenticationError)
     return { message: "The Anthropic API key is missing or invalid. Set ANTHROPIC_API_KEY on the server.", status: 500 };
   if (err instanceof Anthropic.RateLimitError) return { message: "Rate limited by the Anthropic API. Try again in a minute.", status: 429 };
+  if (err instanceof Anthropic.APIConnectionTimeoutError)
+    return { message: "Claude didn't respond in time. Check this computer can reach api.anthropic.com (VPN or proxy), then try again.", status: 504 };
+  if (err instanceof Anthropic.APIConnectionError)
+    return { message: "Couldn't reach the Anthropic API. Check your internet connection, VPN or proxy, then try again.", status: 502 };
   if (err instanceof Anthropic.APIError) return { message: `Anthropic API error (${err.status}): ${err.message}`, status: 502 };
   if (err instanceof Error && /authentication method/i.test(err.message))
     return { message: "No Anthropic API key found. Add ANTHROPIC_API_KEY to .env.local (or your Vercel project settings) and restart.", status: 500 };

@@ -17,6 +17,7 @@ import { Shell } from "./Shell";
 type VariantResult = { ok: true; variant: Variant } | { ok: false; direction: string; error: string };
 type ChatResponse =
   | { type: "questions"; message: string; questions: string[] }
+  | { type: "brief"; message: string; brief: Record<string, unknown>; spec: SectionSpec; title?: string }
   | { type: "variants"; message: string; variants: VariantResult[]; brief?: Record<string, unknown>; spec: SectionSpec; title?: string }
   | { type: "refined"; message: string; scene: Scene; html: string; css: string; js: string; issues: string[] };
 
@@ -26,6 +27,43 @@ const STARTERS = [
   "An FAQ accordion with 6 questions about shipping and returns",
   "A testimonials carousel with star ratings",
 ];
+
+/** Longest we wait for one chat request before showing an error. */
+const TIMEOUTS = { thinking: 3 * 60_000, designing: 8 * 60_000, refining: 6 * 60_000 } as const;
+
+async function callChat(payload: unknown, timeoutMs: number): Promise<ChatResponse> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    const data = (await res.json().catch(() => ({}))) as ChatResponse & { error?: string };
+    if (!res.ok || data.error) throw new Error(data.error || `Request failed (${res.status}). Check the terminal running the app for details.`);
+    return data;
+  } catch (e) {
+    if (controller.signal.aborted)
+      throw new Error(`No answer after ${Math.round(timeoutMs / 60_000)} minutes, so I stopped waiting. Check the terminal running the app for errors, then try again.`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Seconds since the component mounted, updated every second. */
+function Elapsed() {
+  const [start] = useState(() => Date.now());
+  const [now, setNow] = useState(start);
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const s = Math.floor((now - start) / 1000);
+  return <span className="tabular-nums text-slate-400">{s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`}</span>;
+}
 
 function msg(role: ChatMessage["role"], text: string, extra: Partial<ChatMessage> = {}): ChatMessage {
   return { id: uid("m"), role, text, createdAt: Date.now(), ...extra };
@@ -154,20 +192,27 @@ export function Workspace({ sectionId }: { sectionId: string }) {
     setImages([]);
     const refining = hasDesign && view === "editor" && opts.action !== "regenerate";
     setBusy(refining ? "refining" : opts.action === "regenerate" ? "designing" : "thinking");
+    const stage = refining ? "refining" : opts.action === "regenerate" ? "designing" : "thinking";
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(await authHeaders()) },
-        body: JSON.stringify({
+      let data = await callChat(
+        {
           project,
           section: next,
           action: refining ? "auto" : opts.action === "regenerate" ? "regenerate" : "auto",
           scene: refining ? workingScene.current : undefined,
           focusNodeId: refining ? focus : undefined,
-        }),
-      });
-      const data = (await res.json().catch(() => ({}))) as ChatResponse & { error?: string };
-      if (!res.ok || data.error) throw new Error(data.error || `Request failed (${res.status})`);
+        },
+        TIMEOUTS[stage],
+      );
+
+      if (data.type === "brief") {
+        // Show the brief reply, then ask for the 3 designs in a second request.
+        const title = next.title.startsWith("Section ") || next.title === "Quick section" || next.title === "Untitled section" ? data.title || next.title : next.title;
+        next = { ...next, title, brief: data.brief, spec: data.spec, messages: [...next.messages, msg("assistant", data.message, { kind: "text" })] };
+        await persist(next);
+        setBusy("designing");
+        data = await callChat({ project, section: next, action: "regenerate" }, TIMEOUTS.designing);
+      }
 
       if (data.type === "questions") {
         const q = data.questions.length ? `\n${data.questions.map((x) => `• ${x}`).join("\n")}` : "";
@@ -175,7 +220,7 @@ export function Workspace({ sectionId }: { sectionId: string }) {
       } else if (data.type === "variants") {
         const ok = data.variants.filter((v): v is { ok: true; variant: Variant } => v.ok).map((v) => v.variant);
         const failed = data.variants.filter((v) => !v.ok).length;
-        const note = `${data.message}\nHere ${ok.length === 1 ? "is 1 option" : `are ${ok.length} options`} on the right. Pick one to open it in the editor.${failed ? ` (${failed} couldn't be generated.)` : ""}`;
+        const note = `${data.message ? `${data.message}\n` : ""}Here ${ok.length === 1 ? "is 1 option" : `are ${ok.length} options`} on the right. Pick one to open it in the editor.${failed ? ` (${failed} couldn't be generated.)` : ""}`;
         await persist({
           ...next,
           title: next.title.startsWith("Section ") || next.title === "Quick section" || next.title === "Untitled section" ? data.title || next.title : next.title,
@@ -272,7 +317,8 @@ export function Workspace({ sectionId }: { sectionId: string }) {
             {busy && (
               <div className="flex items-center gap-2 text-sm text-slate-500">
                 <Spinner />
-                {busy === "thinking" ? "Reading your brief…" : busy === "designing" ? "Designing 3 options…" : "Updating the design…"}
+                <span>{busy === "thinking" ? "Reading your brief…" : busy === "designing" ? "Designing 3 options (usually 1 to 3 minutes)…" : "Updating the design…"}</span>
+                <Elapsed key={busy} />
               </div>
             )}
           </div>

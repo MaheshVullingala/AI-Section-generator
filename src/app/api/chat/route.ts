@@ -10,7 +10,7 @@ export const maxDuration = 300;
 interface ChatRequest {
   project: Project;
   section: Section; // includes the new user message as the last entry
-  /** "auto": brief or refine depending on state; "regenerate": 3 new options from the current brief. */
+  /** "auto": brief or refine depending on state; "regenerate": 3 designs from the current brief. */
   action?: "auto" | "regenerate";
   /** The design currently shown in the editor (may include unsaved edits). */
   scene?: Scene;
@@ -48,6 +48,8 @@ export async function POST(request: Request) {
   const last = section.messages[section.messages.length - 1];
   const userImages = section.messages.filter((m) => m.role === "user").flatMap((m) => m.images ?? []);
 
+  const started = Date.now();
+  const log = (step: string) => console.log(`[chat] ${section.id} ${step} in ${((Date.now() - started) / 1000).toFixed(1)}s`);
   try {
     // Refine the chosen design.
     if (action === "auto" && section.versions.length && scene && last?.role === "user") {
@@ -63,6 +65,7 @@ export async function POST(request: Request) {
         images: imagesFromDataUrls((last.images ?? []).map((i) => i.dataUrl)),
         webFetch: links.length > 0,
       });
+      log("refined");
       return Response.json({ type: "refined", message: result.rationale || "Done. I've updated the design.", ...result });
     }
 
@@ -70,10 +73,15 @@ export async function POST(request: Request) {
     if (action === "regenerate" && section.brief) {
       const spec = specFromBrief(project, section.brief, section.spec);
       const variants = await generateVariants(project.designSystem, spec, imagesFromDataUrls(userImages.slice(-4).map((i) => i.dataUrl)), section.id);
-      return Response.json({ type: "variants", message: "Here are 3 new options.", variants, spec });
+      log(`designed (${variants.filter((v) => v.ok).length}/3 ok)`);
+      for (const v of variants) if (!v.ok) console.error(`[chat] ${section.id} ${v.direction} failed: ${v.error}`);
+      if (variants.every((v) => !v.ok)) return Response.json({ error: (variants[0] as { error: string }).error }, { status: 502 });
+      return Response.json({ type: "variants", message: "", variants, spec });
     }
 
-    // Brief: ask follow-ups, or design.
+    if (action === "regenerate") return Response.json({ error: "Describe the section in the chat first." }, { status: 400 });
+
+    // Brief: ask follow-ups, or write the brief.
     const links = section.messages.flatMap((m) => m.links ?? []);
     const text = await complete({
       model: GENERATE_MODEL,
@@ -95,18 +103,18 @@ export async function POST(request: Request) {
       } catch {
         questions = [questionsRaw];
       }
+      log("asked questions");
       return Response.json({ type: "questions", message, questions });
     }
+    if (!briefRaw) throw new Error("Claude didn't return a brief or questions. Try sending your message again.");
     const brief = JSON.parse(briefRaw.slice(briefRaw.indexOf("{"), briefRaw.lastIndexOf("}") + 1)) as Record<string, unknown>;
     const spec = specFromBrief(project, brief, section.spec);
-    const variants = await generateVariants(project.designSystem, spec, imagesFromDataUrls(userImages.slice(-4).map((i) => i.dataUrl)), section.id);
-    if (variants.every((v) => !v.ok)) {
-      const first = variants.find((v) => !v.ok) as { error: string };
-      return Response.json({ error: first.error }, { status: 502 });
-    }
-    return Response.json({ type: "variants", message, variants, brief, spec, title: typeof brief.title === "string" ? brief.title : undefined });
+    log("brief written");
+    // The client asks for the designs in a second request, so it can show progress.
+    return Response.json({ type: "brief", message, brief, spec, title: typeof brief.title === "string" ? brief.title : undefined });
   } catch (err) {
     const { message, status } = errorMessage(err);
+    console.error(`[chat] ${section.id} failed after ${((Date.now() - started) / 1000).toFixed(1)}s:`, err);
     return Response.json({ error: message }, { status });
   }
 }
