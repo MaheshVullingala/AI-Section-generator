@@ -55,7 +55,7 @@ All Claude calls go through `src/lib/claude.ts`. By default both generation and 
 
 Projects and sections go through the `Store` interface in `src/lib/storage.ts`.
 
-- **Shared (Supabase).** Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` to content-intake's Supabase project. Data lives in the `section_gen` schema (projects and sections tables, row-level security). People sign in with their content-intake account (email and password, or an emailed link when password login is off there); this app never creates accounts. Access is limited to emails matching a pattern in `section_gen.allowed_emails`, and the API routes check the same thing, so only members can spend Claude credits. The `section_gen` schema must be listed under *Exposed schemas* in the Supabase API settings.
+- **Shared (Supabase).** Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (or `NEXT_PUBLIC_SUPABASE_ANON_KEY`) to content-intake's Supabase project. Data lives in the `section_gen` schema (projects and sections tables, row-level security). People sign in with their content-intake account (email and password, or an emailed link when password login is off there); this app never creates accounts. Access is limited to emails matching a pattern in `section_gen.allowed_emails`, and the API routes check the same thing, so only members can spend Claude credits. The `section_gen` schema must be listed under *Exposed schemas* in the Supabase API settings.
 - **Local.** Without those variables everything stays in the browser's `localStorage` and there's no sign-in.
 
 ## Project layout

@@ -6,7 +6,8 @@ import { createClient } from "@supabase/supabase-js";
  */
 export async function requireMember(request: Request): Promise<Response | null> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  // The anon key works too (older Supabase projects and content-intake use that name).
+  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) {
     // Local-only mode is for development. A production server without sign-in would
     // let anyone with the URL spend Claude credits, so refuse unless explicitly allowed.
