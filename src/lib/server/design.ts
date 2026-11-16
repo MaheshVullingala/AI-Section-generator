@@ -11,26 +11,39 @@ export type VariantResult = { ok: true; variant: Variant } | { ok: false; direct
 
 const REFERENCE_NOTE = "\n\nReference images are attached above. Borrow their layout ideas, rhythm and interaction cues, but use this design system's tokens, not their colours or fonts.";
 
-/** Generates 3 structured designs in parallel, one per creative direction. */
-export async function generateVariants(ds: DesignSystem, spec: SectionSpec, images: PromptImage[] = [], rootClass?: string): Promise<VariantResult[]> {
-  const results = await Promise.allSettled(
-    VARIANT_DIRECTIONS.map(async (direction): Promise<Variant> => {
-      // Every variant gets its own root class; the chosen one becomes the section's.
-      const id = rootClass ? `${rootClass}-${direction.id}` : uid("sg").replace("_", "-");
-      const text = await complete({
-        model: GENERATE_MODEL,
-        effort: GENERATE_EFFORT,
-        system: SYSTEM_PROMPT,
-        prompt: variantPrompt(ds, spec, direction) + (images.length ? REFERENCE_NOTE : ""),
-        images,
-      });
-      const { name, rationale, scene } = parseSceneResponse(text);
-      const code = compileScene(scene, { rootClass: id });
-      return { id, direction: direction.label, name, rationale, scene, ...code, issues: checkSection(code, id, spec) };
-    }),
-  );
+/** Generates one structured design for a creative direction. */
+export async function generateVariant(
+  ds: DesignSystem,
+  spec: SectionSpec,
+  direction: (typeof VARIANT_DIRECTIONS)[number],
+  images: PromptImage[] = [],
+  rootClass?: string,
+): Promise<Variant> {
+  // Every variant gets its own root class; the chosen one becomes the section's.
+  const id = rootClass ? `${rootClass}-${direction.id}` : uid("sg").replace("_", "-");
+  const text = await complete({
+    model: GENERATE_MODEL,
+    effort: GENERATE_EFFORT,
+    system: SYSTEM_PROMPT,
+    prompt: variantPrompt(ds, spec, direction) + (images.length ? REFERENCE_NOTE : ""),
+    images,
+  });
+  const { name, rationale, scene } = parseSceneResponse(text);
+  const code = compileScene(scene, { rootClass: id });
+  return { id, direction: direction.label, name, rationale, scene, ...code, issues: checkSection(code, id, spec) };
+}
+
+/**
+ * Generates designs in parallel, one per creative direction. Pass `only` to
+ * generate a single direction, so each design can run in its own request
+ * (and its own function time limit when hosted).
+ */
+export async function generateVariants(ds: DesignSystem, spec: SectionSpec, images: PromptImage[] = [], rootClass?: string, only?: string): Promise<VariantResult[]> {
+  const directions = only ? VARIANT_DIRECTIONS.filter((d) => d.id === only) : VARIANT_DIRECTIONS;
+  if (!directions.length) return [{ ok: false, direction: only ?? "", error: `Unknown design direction "${only}".` }];
+  const results = await Promise.allSettled(directions.map((d) => generateVariant(ds, spec, d, images, rootClass)));
   return results.map((r, i) =>
-    r.status === "fulfilled" ? { ok: true as const, variant: r.value } : { ok: false as const, direction: VARIANT_DIRECTIONS[i].label, error: errorMessage(r.reason).message },
+    r.status === "fulfilled" ? { ok: true as const, variant: r.value } : { ok: false as const, direction: directions[i].label, error: errorMessage(r.reason).message },
   );
 }
 

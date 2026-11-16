@@ -37,6 +37,15 @@ Open http://localhost:3000.
 
 The API key is only used by the server routes in `src/app/api/` and is never sent to the browser.
 
+## Hosting
+
+The app is a standard Next.js server, so it runs on Vercel or on any Node.js host (`npm run build`, then `npm start`).
+
+- Set `ANTHROPIC_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` in the host's environment variables. The two public values are read at build time, so redeploy after changing them.
+- The API routes ask for up to 300 seconds (`maxDuration`), the limit on Vercel's Hobby plan. Each of the 3 designs is generated in its own request, so each gets the full limit.
+- Requests stay small: the browser leaves out saved versions and sends only the newest reference images Claude uses. Vercel rejects requests over 4.5 MB.
+- For email-link sign-in, add the app's URL to *Redirect URLs* in the Supabase project's auth settings. Password sign-in needs no change.
+
 ## Models
 
 All Claude calls go through `src/lib/claude.ts`. By default both generation and refinement use `claude-opus-5-5` at `medium` effort, with server-side refusal fallbacks enabled. Override with the `CLAUDE_*` variables in `.env.example`, for example `CLAUDE_GENERATE_MODEL=claude-sonnet-5-5` for faster and cheaper first drafts.
