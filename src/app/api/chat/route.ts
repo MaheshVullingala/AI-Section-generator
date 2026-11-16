@@ -15,6 +15,8 @@ interface ChatRequest {
   /** The design currently shown in the editor (may include unsaved edits). */
   scene?: Scene;
   focusNodeId?: string;
+  /** With "regenerate": generate only this design direction (see VARIANT_DIRECTIONS). */
+  direction?: string;
 }
 
 function tag(text: string, name: string): string {
@@ -43,16 +45,17 @@ export async function POST(request: Request) {
   const denied = await requireMember(request);
   if (denied) return denied;
   const body = (await request.json()) as ChatRequest;
-  const { project, section, action = "auto", scene, focusNodeId } = body;
+  const { project, section, action = "auto", scene, focusNodeId, direction } = body;
   if (!project || !section) return Response.json({ error: "project and section are required" }, { status: 400 });
   const last = section.messages[section.messages.length - 1];
-  const userImages = section.messages.filter((m) => m.role === "user").flatMap((m) => m.images ?? []);
+  // The client strips older images to keep requests small, leaving empty data URLs.
+  const userImages = section.messages.filter((m) => m.role === "user").flatMap((m) => (m.images ?? []).filter((i) => i.dataUrl));
 
   const started = Date.now();
   const log = (step: string) => console.log(`[chat] ${section.id} ${step} in ${((Date.now() - started) / 1000).toFixed(1)}s`);
   try {
-    // Refine the chosen design.
-    if (action === "auto" && section.versions.length && scene && last?.role === "user") {
+    // Refine the chosen design. The client sends the current scene only when refining.
+    if (action === "auto" && scene && last?.role === "user") {
       const links = last.links ?? [];
       const instruction = [last.text, links.length ? `Reference links (open them with web_fetch if useful): ${links.join(", ")}` : ""].filter(Boolean).join("\n");
       const result = await refineDesign({
@@ -72,8 +75,8 @@ export async function POST(request: Request) {
     // Regenerate from the existing brief.
     if (action === "regenerate" && section.brief) {
       const spec = specFromBrief(project, section.brief, section.spec);
-      const variants = await generateVariants(project.designSystem, spec, imagesFromDataUrls(userImages.slice(-4).map((i) => i.dataUrl)), section.id);
-      log(`designed (${variants.filter((v) => v.ok).length}/3 ok)`);
+      const variants = await generateVariants(project.designSystem, spec, imagesFromDataUrls(userImages.slice(-4).map((i) => i.dataUrl)), section.id, direction);
+      log(`designed ${direction ?? "all"} (${variants.filter((v) => v.ok).length}/${variants.length} ok)`);
       for (const v of variants) if (!v.ok) console.error(`[chat] ${section.id} ${v.direction} failed: ${v.error}`);
       if (variants.every((v) => !v.ok)) return Response.json({ error: (variants[0] as { error: string }).error }, { status: 502 });
       return Response.json({ type: "variants", message: "", variants, spec });

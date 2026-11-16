@@ -37,6 +37,16 @@ Open http://localhost:3000.
 
 The API key is only used by the server routes in `src/app/api/` and is never sent to the browser.
 
+## Hosting
+
+The app is a standard Next.js server, so it runs on Vercel or on any Node.js host (`npm run build`, then `npm start`).
+
+- On Vercel, import the repo and set the production branch to the branch that has the app (`main` once the PRs are merged).
+- Set `ANTHROPIC_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` in the host's environment variables. The two public values are read at build time, so redeploy after changing them.
+- The API routes ask for up to 300 seconds (`maxDuration`), the limit on Vercel's Hobby plan. Each of the 3 designs is generated in its own request, so each gets the full limit.
+- Requests stay small: the browser leaves out saved versions and sends only the newest reference images Claude uses. Vercel rejects requests over 4.5 MB.
+- For email-link sign-in, add the app's URL to *Redirect URLs* in the Supabase project's auth settings. Password sign-in needs no change.
+
 ## Models
 
 All Claude calls go through `src/lib/claude.ts`. By default both generation and refinement use `claude-opus-5-5` at `medium` effort, with server-side refusal fallbacks enabled. Override with the `CLAUDE_*` variables in `.env.example`, for example `CLAUDE_GENERATE_MODEL=claude-sonnet-5-5` for faster and cheaper first drafts.
@@ -45,7 +55,7 @@ All Claude calls go through `src/lib/claude.ts`. By default both generation and 
 
 Projects and sections go through the `Store` interface in `src/lib/storage.ts`.
 
-- **Shared (Supabase).** Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` to content-intake's Supabase project. Data lives in the `section_gen` schema (projects and sections tables, row-level security). People sign in with their content-intake account (email and password, or an emailed link when password login is off there); this app never creates accounts. Access is limited to emails matching a pattern in `section_gen.allowed_emails`, and the API routes check the same thing, so only members can spend Claude credits. The `section_gen` schema must be listed under *Exposed schemas* in the Supabase API settings.
+- **Shared (Supabase).** Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (or `NEXT_PUBLIC_SUPABASE_ANON_KEY`) to content-intake's Supabase project. Data lives in the `section_gen` schema (projects and sections tables, row-level security). People sign in with their content-intake account (email and password, or an emailed link when password login is off there); this app never creates accounts. Access is limited to emails matching a pattern in `section_gen.allowed_emails`, and the API routes check the same thing, so only members can spend Claude credits. The `section_gen` schema must be listed under *Exposed schemas* in the Supabase API settings.
 - **Local.** Without those variables everything stays in the browser's `localStorage` and there's no sign-in.
 
 ## Project layout

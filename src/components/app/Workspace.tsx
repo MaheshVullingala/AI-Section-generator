@@ -7,6 +7,7 @@ import { compileScene } from "@/lib/scene/compile";
 import { findNode } from "@/lib/scene/ops";
 import type { Scene } from "@/lib/scene/types";
 import { store } from "@/lib/storage";
+import { VARIANT_DIRECTIONS } from "@/lib/catalog";
 import { uid } from "@/lib/tokens";
 import type { ChatImage, ChatMessage, Project, SavedSection, Section, SectionSpec, Variant } from "@/lib/types";
 import { makeVersion, SectionEditor } from "../editor/SectionEditor";
@@ -28,25 +29,54 @@ const STARTERS = [
   "A testimonials carousel with star ratings",
 ];
 
-/** Longest we wait for one chat request before showing an error. */
-const TIMEOUTS = { thinking: 3 * 60_000, designing: 8 * 60_000, refining: 6 * 60_000 } as const;
+/** Longest we wait for one chat request before showing an error. Each design is its own request. */
+const TIMEOUTS = { thinking: 3 * 60_000, designing: 6 * 60_000, refining: 6 * 60_000 } as const;
 
-async function callChat(payload: unknown, timeoutMs: number): Promise<ChatResponse> {
+/** Claude only sees the newest reference images (see /api/chat), so older ones aren't uploaded. */
+const MAX_SENT_IMAGES = 4;
+
+/**
+ * The section as the server needs it. Hosts cap request size (4.5 MB on Vercel),
+ * so leave out saved versions and designs, and blank all but the newest images.
+ * Blanked images stay in the list so the server can still say how many there were.
+ */
+function slimSection(s: Section): Section {
+  const last = s.messages[s.messages.length - 1];
+  let budget = MAX_SENT_IMAGES;
+  const keep = new Set<ChatImage>(last?.images ?? []);
+  for (let i = s.messages.length - 1; i >= 0 && budget > 0; i--) {
+    const m = s.messages[i];
+    if (m.role !== "user" || !m.images) continue;
+    for (let j = m.images.length - 1; j >= 0 && budget > 0; j--, budget--) keep.add(m.images[j]);
+  }
+  return {
+    ...s,
+    versions: [],
+    variants: [],
+    messages: s.messages.map((m) => (m.images ? { ...m, images: m.images.map((img) => (keep.has(img) ? img : { ...img, dataUrl: "" })) } : m)),
+  };
+}
+
+async function callChat(payload: { section: Section } & Record<string, unknown>, timeoutMs: number): Promise<ChatResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(await authHeaders()) },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, section: slimSection(payload.section) }),
       signal: controller.signal,
     });
     const data = (await res.json().catch(() => ({}))) as ChatResponse & { error?: string };
-    if (!res.ok || data.error) throw new Error(data.error || `Request failed (${res.status}). Check the terminal running the app for details.`);
+    if (!res.ok || data.error) {
+      if (res.status === 413) throw new Error("That message is too large to send. Try fewer or smaller images.");
+      if (res.status === 504) throw new Error("The server ran out of time on this request. Try again, or ask for a smaller change.");
+      throw new Error(data.error || `Request failed (${res.status}). Check the server logs for details.`);
+    }
     return data;
   } catch (e) {
     if (controller.signal.aborted)
-      throw new Error(`No answer after ${Math.round(timeoutMs / 60_000)} minutes, so I stopped waiting. Check the terminal running the app for errors, then try again.`);
+      throw new Error(`No answer after ${Math.round(timeoutMs / 60_000)} minutes, so I stopped waiting. Check the server logs for errors, then try again.`);
     throw e;
   } finally {
     clearTimeout(timer);
@@ -112,6 +142,23 @@ function ChatBubble({ m, onPickQuestion }: { m: ChatMessage; onPickQuestion?: (q
   );
 }
 
+function VariantCard({ variant: v, project, section, onChoose, disabled }: { variant: Variant; project: Project; section: Section; onChoose?: () => void; disabled?: boolean }) {
+  return (
+    <Card className="flex flex-col gap-3">
+      <div>
+        <p className="text-xs font-medium uppercase tracking-wide text-indigo-600">{v.direction}</p>
+        <h2 className="font-semibold text-slate-900">{v.name}</h2>
+      </div>
+      <Preview code={v} designSystem={project.designSystem} rootClass={v.id} breakpoints={section.spec.breakpoints} compact />
+      <p className="text-sm text-slate-600">{v.rationale}</p>
+      {v.issues.length > 0 && <p className="text-xs text-amber-700">Quality check: {v.issues.length} issue(s), fixable in the editor.</p>}
+      <Button className="mt-auto" onClick={onChoose} disabled={disabled}>
+        {onChoose ? "Use this design" : "Waiting for the others…"}
+      </Button>
+    </Card>
+  );
+}
+
 export function Workspace({ sectionId }: { sectionId: string }) {
   const [section, setSection] = useState<Section | null | undefined>(undefined);
   const [project, setProject] = useState<Project | null>(null);
@@ -119,6 +166,8 @@ export function Workspace({ sectionId }: { sectionId: string }) {
   const [images, setImages] = useState<ChatImage[]>([]);
   const [busy, setBusy] = useState<false | "thinking" | "designing" | "refining">(false);
   const [view, setView] = useState<"options" | "editor">("editor");
+  /** Designs that have arrived while the others are still generating. */
+  const [partial, setPartial] = useState<Variant[]>([]);
   const [selected, setSelected] = useState<{ id: string; name: string } | null>(null);
   const workingScene = useRef<Scene | undefined>(undefined);
   const listRef = useRef<HTMLDivElement>(null);
@@ -179,6 +228,38 @@ export function Workspace({ sectionId }: { sectionId: string }) {
   const focus = hasDesign && view === "editor" && selected ? selected.id : undefined;
   const focusName = selected?.name ?? "";
 
+  /** Asks for each design in its own request, shows each one as it arrives, then saves them. */
+  const showDesigns = async (next: Section) => {
+    setPartial([]);
+    const arrived: Variant[] = [];
+    const errors: string[] = [];
+    let spec = next.spec;
+    await Promise.all(
+      VARIANT_DIRECTIONS.map(async (d) => {
+        try {
+          const data = await callChat({ project, section: next, action: "regenerate", direction: d.id }, TIMEOUTS.designing);
+          if (data.type !== "variants") throw new Error("Unexpected reply from the server.");
+          spec = data.spec;
+          for (const v of data.variants) {
+            if (v.ok) arrived.push(v.variant);
+            else errors.push(v.error);
+          }
+        } catch (e) {
+          errors.push(e instanceof Error ? e.message : String(e));
+        }
+        setPartial([...arrived]);
+      }),
+    );
+    setPartial([]);
+    // Keep the designs in direction order, whatever order they arrived in.
+    const order = VARIANT_DIRECTIONS.map((d) => d.label);
+    arrived.sort((a, b) => order.indexOf(a.direction) - order.indexOf(b.direction));
+    if (!arrived.length) throw new Error(errors[0] || "No designs could be generated. Try again.");
+    const note = `Here ${arrived.length === 1 ? "is 1 option" : `are ${arrived.length} options`} on the right. Pick one to open it in the editor.${errors.length ? ` (${errors.length} couldn't be generated.)` : ""}`;
+    await persist({ ...next, spec, variants: arrived, messages: [...next.messages, msg("assistant", note, { kind: "variants" })] });
+    setView("options");
+  };
+
   const send = async (opts: { action?: "auto" | "regenerate"; overrideText?: string } = {}) => {
     const body = (opts.overrideText ?? text).trim();
     if (busy || (!body && !images.length && opts.action !== "regenerate")) return;
@@ -194,11 +275,15 @@ export function Workspace({ sectionId }: { sectionId: string }) {
     setBusy(refining ? "refining" : opts.action === "regenerate" ? "designing" : "thinking");
     const stage = refining ? "refining" : opts.action === "regenerate" ? "designing" : "thinking";
     try {
-      let data = await callChat(
+      if (opts.action === "regenerate" && !refining) {
+        await showDesigns(next);
+        return;
+      }
+      const data = await callChat(
         {
           project,
           section: next,
-          action: refining ? "auto" : opts.action === "regenerate" ? "regenerate" : "auto",
+          action: "auto",
           scene: refining ? workingScene.current : undefined,
           focusNodeId: refining ? focus : undefined,
         },
@@ -211,25 +296,10 @@ export function Workspace({ sectionId }: { sectionId: string }) {
         next = { ...next, title, brief: data.brief, spec: data.spec, messages: [...next.messages, msg("assistant", data.message, { kind: "text" })] };
         await persist(next);
         setBusy("designing");
-        data = await callChat({ project, section: next, action: "regenerate" }, TIMEOUTS.designing);
-      }
-
-      if (data.type === "questions") {
+        await showDesigns(next);
+      } else if (data.type === "questions") {
         const q = data.questions.length ? `\n${data.questions.map((x) => `• ${x}`).join("\n")}` : "";
         await persist({ ...next, messages: [...next.messages, msg("assistant", data.message + q, { kind: "questions" })] });
-      } else if (data.type === "variants") {
-        const ok = data.variants.filter((v): v is { ok: true; variant: Variant } => v.ok).map((v) => v.variant);
-        const failed = data.variants.filter((v) => !v.ok).length;
-        const note = `${data.message ? `${data.message}\n` : ""}Here ${ok.length === 1 ? "is 1 option" : `are ${ok.length} options`} on the right. Pick one to open it in the editor.${failed ? ` (${failed} couldn't be generated.)` : ""}`;
-        await persist({
-          ...next,
-          title: next.title.startsWith("Section ") || next.title === "Quick section" || next.title === "Untitled section" ? data.title || next.title : next.title,
-          brief: data.brief ?? next.brief,
-          spec: data.spec,
-          variants: ok,
-          messages: [...next.messages, msg("assistant", note, { kind: "variants" })],
-        });
-        setView("options");
       } else if (data.type === "refined") {
         const v = makeVersion({ html: data.html, css: data.css, js: data.js }, (focus ? `${focusName}: ` : "") + (body || "Chat change"), data.issues, data.scene);
         await persist({
@@ -317,7 +387,7 @@ export function Workspace({ sectionId }: { sectionId: string }) {
             {busy && (
               <div className="flex items-center gap-2 text-sm text-slate-500">
                 <Spinner />
-                <span>{busy === "thinking" ? "Reading your brief…" : busy === "designing" ? "Designing 3 options (usually 1 to 3 minutes)…" : "Updating the design…"}</span>
+                <span>{busy === "thinking" ? "Reading your brief…" : busy === "designing" ? `Designing 3 options, ${partial.length} of 3 ready (usually 1 to 3 minutes)…` : "Updating the design…"}</span>
                 <Elapsed key={busy} />
               </div>
             )}
@@ -412,26 +482,18 @@ export function Workspace({ sectionId }: { sectionId: string }) {
                 </div>
               </div>
               {busy === "designing" || (busy === "thinking" && !section.variants.length) ? (
-                <div className="grid gap-4 lg:grid-cols-3">
-                  {[0, 1, 2].map((i) => (
+                <div className="grid gap-4 xl:grid-cols-3">
+                  {partial.map((v) => (
+                    <VariantCard key={v.id} variant={v} project={project} section={section} disabled />
+                  ))}
+                  {Array.from({ length: Math.max(0, VARIANT_DIRECTIONS.length - partial.length) }, (_, i) => (
                     <div key={i} className="h-80 animate-pulse rounded-xl bg-slate-200/70" />
                   ))}
                 </div>
               ) : section.variants.length ? (
                 <div className="grid gap-4 xl:grid-cols-3">
                   {section.variants.map((v) => (
-                    <Card key={v.id} className="flex flex-col gap-3">
-                      <div>
-                        <p className="text-xs font-medium uppercase tracking-wide text-indigo-600">{v.direction}</p>
-                        <h2 className="font-semibold text-slate-900">{v.name}</h2>
-                      </div>
-                      <Preview code={v} designSystem={project.designSystem} rootClass={v.id} breakpoints={section.spec.breakpoints} compact />
-                      <p className="text-sm text-slate-600">{v.rationale}</p>
-                      {v.issues.length > 0 && <p className="text-xs text-amber-700">Quality check: {v.issues.length} issue(s), fixable in the editor.</p>}
-                      <Button className="mt-auto" onClick={() => choose(v)}>
-                        Use this design
-                      </Button>
-                    </Card>
+                    <VariantCard key={v.id} variant={v} project={project} section={section} onChoose={() => choose(v)} disabled={!!busy} />
                   ))}
                 </div>
               ) : (
