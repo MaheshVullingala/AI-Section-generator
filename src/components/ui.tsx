@@ -75,7 +75,7 @@ export function Waveform({ className }: { className?: string }) {
   );
 }
 
-/** Section Generator mark: a chip outline with a blinking core. */
+/** Forma mark: a chip outline with a blinking core. */
 export function Logo({ size = 24 }: { size?: number }) {
   return (
     <span className="relative inline-block shrink-0 rounded-[4px] border-2 border-indigo-600" style={{ width: size, height: size }} aria-hidden>

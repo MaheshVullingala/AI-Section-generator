@@ -28,8 +28,9 @@ export function Shell({ children, crumbs, actions, wide }: { children: ReactNode
         <div className={`mx-auto flex h-14 items-center gap-3 px-4 ${wide ? "" : "max-w-7xl"}`}>
           <Link href="/" className="flex items-center gap-2.5 font-display text-[15px] font-bold uppercase tracking-wider text-slate-900 hover:text-indigo-600">
             <Logo />
-            Section Gen
+            Forma
           </Link>
+          {!crumbs?.length && <span className="sg-label hidden sm:inline">Ideas into Experiences</span>}
           {crumbs?.map((c, i) => (
             <span key={i} className="flex min-w-0 items-center gap-3 font-mono text-xs uppercase tracking-wider text-slate-500">
               <span aria-hidden>{"//"}</span>

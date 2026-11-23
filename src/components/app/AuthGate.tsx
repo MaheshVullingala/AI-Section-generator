@@ -45,7 +45,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return (
       <Centered title="No access yet">
         <p className="text-sm text-slate-600">
-          You&apos;re signed in as <strong>{session?.user.email}</strong>, but this account isn&apos;t on the section generator&apos;s access list. Ask Mahesh to add you.
+          You&apos;re signed in as <strong>{session?.user.email}</strong>, but this account isn&apos;t on Forma&apos;s access list. Ask Mahesh to add you.
         </p>
         <button className="mt-4 text-sm font-medium text-indigo-600 hover:underline" onClick={() => supabase!.auth.signOut()}>
           Sign in with another account
@@ -62,8 +62,9 @@ function Centered({ title, children }: { title: string; children: ReactNode }) {
       <div className="sg-lock relative z-10 w-full max-w-sm rounded-md border border-slate-200 bg-white p-6">
         <div className="mb-5 flex items-center gap-2.5 font-display font-bold uppercase tracking-wider text-slate-900">
           <Logo />
-          Section Gen
+          Forma
         </div>
+        <p className="sg-label -mt-3 mb-5">Ideas into Experiences</p>
         <h1 className="mb-2 text-lg font-semibold text-slate-900">{title}</h1>
         {children}
       </div>

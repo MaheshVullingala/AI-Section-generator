@@ -22,7 +22,7 @@ const chakra = Chakra_Petch({
 });
 
 export const metadata: Metadata = {
-  title: "Section Generator",
+  title: "Forma · Ideas into Experiences",
   description: "Generate interactive website sections from your design system with Claude.",
 };
 
