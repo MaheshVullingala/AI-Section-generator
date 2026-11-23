@@ -147,7 +147,18 @@ ${focus}
 CHANGE REQUEST
 ${instruction}
 
-Apply the change request to the current scene. Keep node ids stable, keep everything the request does not ask to change, and keep every existing behavior working. Return the complete updated scene in the response format. In <rationale>, briefly say what you changed.`;
+Apply the change request to the current scene. Keep node ids stable, keep everything the request does not ask to change, and keep every existing behavior working.
+
+RESPONSE FORMAT FOR CHANGES (use this instead of the format above)
+Return only what changed, so the response stays short:
+<rationale>One or two sentences on what you changed.</rationale>
+<patch>{"nodes": [ ...each changed node as a complete node object, including all of its children... ], "customCss": "only include this key if customCss changed; give the complete new value"}</patch>
+
+Rules for the patch:
+- Each node in "nodes" replaces the existing node with the same id, together with its whole subtree. Pick the smallest node that contains the change (for example the card, not the whole section).
+- To add or remove an element, return its parent with the updated children. New nodes need new unique ids.
+- Leave out every node that did not change.
+- If the change reshapes most of the design, return the full updated scene as <scene>…</scene> instead of <patch>.`;
 }
 
 export const FOLLOWUP_SYSTEM = `You help a design team brief a website section before it is designed. Given the brief so far, decide whether anything important is missing or ambiguous for designing this specific section for this business. Ask at most 4 short, concrete questions, only where the answer would materially change the design or content. If the brief is complete, ask none.

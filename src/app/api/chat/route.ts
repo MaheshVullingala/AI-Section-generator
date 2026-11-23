@@ -1,4 +1,4 @@
-import { complete, errorMessage, GENERATE_MODEL, imagesFromDataUrls } from "@/lib/claude";
+import { BRIEF_MODEL, complete, errorMessage, imagesFromDataUrls } from "@/lib/claude";
 import { BRIEF_SYSTEM, briefPrompt, specFromBrief } from "@/lib/prompts";
 import type { Scene } from "@/lib/scene/types";
 import { requireMember } from "@/lib/server/auth";
@@ -87,7 +87,8 @@ export async function POST(request: Request) {
     // Brief: ask follow-ups, or write the brief.
     const links = section.messages.flatMap((m) => m.links ?? []);
     const text = await complete({
-      model: GENERATE_MODEL,
+      label: "brief",
+      model: BRIEF_MODEL,
       effort: "low",
       system: BRIEF_SYSTEM,
       prompt: briefPrompt(project, transcript(section.messages), links),

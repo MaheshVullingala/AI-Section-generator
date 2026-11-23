@@ -49,7 +49,22 @@ The app is a standard Next.js server, so it runs on Vercel or on any Node.js hos
 
 ## Models
 
-All Claude calls go through `src/lib/claude.ts`. By default both generation and refinement use `claude-opus-5-5` at `medium` effort, with server-side refusal fallbacks enabled. Override with the `CLAUDE_*` variables in `.env.example`, for example `CLAUDE_GENERATE_MODEL=claude-sonnet-5-5` for faster and cheaper first drafts.
+All Claude calls go through `src/lib/claude.ts`, with server-side refusal fallbacks enabled. By default:
+
+- The 3 first designs use `claude-opus-5-5` at `medium` effort.
+- Refinements and the brief chat (questions and brief) use `claude-sonnet-5-5`, at half the price.
+
+Override with the `CLAUDE_*` variables in `.env.example`, for example `CLAUDE_REFINE_MODEL=claude-opus-5-5` to refine with Opus again.
+
+Refinements ask Claude to return only the changed elements (a patch), which the server merges into the current design. Claude can still return a full design when a change reshapes most of it.
+
+Every Claude call logs one line with its token counts and an estimated cost, for example:
+
+```
+[claude] design:clean model=claude-opus-5-5 in=3120 cache_read=1790 cache_write=0 out=14210 stop=end_turn 92.4s ~$0.2968
+```
+
+On Vercel, find these under the project's Logs, filtered by `[claude]`.
 
 ## Storage and sign-in
 
