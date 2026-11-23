@@ -1,6 +1,6 @@
 import type { Scene } from "./scene/types";
-import type { DesignSystem, SectionSpec } from "./types";
-import { interactionGuidance } from "./catalog";
+import type { DesignSystem, Project, SectionSpec } from "./types";
+import { INTERACTIONS, interactionGuidance } from "./catalog";
 import { tokenVariables } from "./tokens";
 
 /** Stable system prompt, kept identical across requests so it can be cached. */
@@ -156,4 +156,82 @@ Reply with only a JSON array of question strings, for example ["Which plan shoul
 
 export function followupPrompt(spec: SectionSpec): string {
   return specBlock(spec, "sg-root");
+}
+
+export const BRIEF_SYSTEM = `You are the design partner inside a website section generator used by an internal team. People describe the section they want in a chat, sometimes with reference images and links. Your job is to turn the conversation into a design brief, asking follow-up questions only when something essential is missing.
+
+Decide between two outcomes:
+1. Ask questions, only if you can't design a good section without the answer: typically when it is unclear what kind of section this is or what it is for. Ask at most 3 short, specific questions in one friendly message. Never ask about things you can sensibly decide yourself (layout, colours, interactions, copy wording); the person can refine later.
+2. Otherwise, write the brief. Fill gaps with sensible choices for this business. Prefer designing over asking: when in doubt, design.
+
+When the person shares links, use the web_fetch tool to look at them, and note the visual and structural cues worth borrowing (layout, rhythm, interaction ideas, tone), never brand assets or copy. When they share images, describe what to take from them in referenceNotes.
+
+Reply with exactly these tags and nothing else outside them:
+<message>a short, friendly reply to the person (1 to 3 sentences). If you are designing, say what you're about to make.</message>
+then EITHER
+<questions>["question 1", "question 2"]</questions>
+OR
+<brief>{
+  "title": "short name for the section, e.g. Pricing with yearly toggle",
+  "sectionType": "Hero | Features | Pricing | Testimonials | FAQ | Call to action | Product showcase | Comparison table | Stats / metrics | Timeline / process | Team | Gallery | Contact / lead form | Custom",
+  "goal": "...",
+  "audience": "...",
+  "tone": "...",
+  "layout": "layout ideas, or 'designer's choice'",
+  "copy": "copy the person provided, verbatim, or notes for writing it",
+  "copyProvided": true or false,
+  "ctas": "CTA labels and links",
+  "images": "image URLs the person gave, one per line, or empty",
+  "interactions": ["names from the allowed list"],
+  "interactionNotes": "...",
+  "referenceNotes": "what to borrow from references, or empty",
+  "requirements": "anything else that must be true"
+}</brief>
+
+Allowed interaction names: ${INTERACTIONS.join(", ")}.`;
+
+export function briefPrompt(project: Project, transcript: string, links: string[]): string {
+  return `PROJECT
+- Name: ${project.name}
+- Business type: ${project.businessType || "(not set)"}
+- Business description: ${project.businessDescription || "(not set)"}
+- Design system: ${project.designSystem.name}${project.designSystem.brandNotes ? `\n- Brand notes: ${project.designSystem.brandNotes}` : ""}
+
+CONVERSATION SO FAR (oldest first)
+${transcript}
+${links.length ? `\nLINKS SHARED\n${links.map((l) => `- ${l}`).join("\n")}` : ""}
+
+Any images attached above were shared by the person as references.`;
+}
+
+/** Turns a brief from the chat into the spec the design prompts use. */
+export function specFromBrief(project: Project, brief: Record<string, unknown>, base: SectionSpec): SectionSpec {
+  const str = (k: string) => (typeof brief[k] === "string" ? (brief[k] as string) : "");
+  const interactions = Array.isArray(brief.interactions)
+    ? (brief.interactions as unknown[]).filter((x): x is string => typeof x === "string" && INTERACTIONS.includes(x))
+    : [];
+  const answers: Record<string, string> = {};
+  for (const [label, key] of [
+    ["Goal", "goal"],
+    ["Audience", "audience"],
+    ["Tone", "tone"],
+    ["Layout", "layout"],
+    ["What to take from the references", "referenceNotes"],
+    ["Other requirements", "requirements"],
+  ] as const) {
+    if (str(key)) answers[label] = str(key);
+  }
+  return {
+    ...base,
+    businessType: project.businessType,
+    businessDescription: project.businessDescription,
+    sectionType: str("sectionType") || "Custom",
+    answers,
+    followUps: [],
+    content: { mode: brief.copyProvided === true ? "provided" : "generate", copy: str("copy"), images: str("images"), ctas: str("ctas") },
+    interactions: interactions.length ? interactions : ["Hover and focus states"],
+    extraInteractionNotes: str("interactionNotes"),
+    constraints: { ...project.defaults },
+    breakpoints: project.designSystem.breakpoints,
+  };
 }

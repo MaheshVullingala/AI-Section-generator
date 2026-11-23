@@ -4,14 +4,12 @@ An internal tool for designing interactive website sections with Claude. Load yo
 
 ## How it works
 
-1. **Design system.** Add tokens with a form, paste JSON (W3C Design Tokens, Tokens Studio or plain nested JSON), paste CSS custom properties, or upload a `.json` / `.css` file. Set default breakpoints and brand notes. Saved design systems can be reused.
-2. **Business.** Pick the business or product type and describe it.
-3. **Section.** Pick the section type (hero, pricing, FAQ, testimonials, ...) and answer its questions.
-4. **Content.** Provide the copy or let Claude write it, add image URLs and CTAs, and choose interactions.
-5. **Breakpoints.** Set the breakpoints for this section, the accessibility target, the target CMS, and whether JavaScript is allowed.
-6. **Review.** Claude checks the brief and asks up to 4 follow-up questions where something important is missing.
-7. **Choose.** Claude generates 3 variants in parallel, each with a different creative direction (clean, editorial, interaction-forward).
-8. **Edit, refine and export.** A visual editor: click any element in the preview (or pick it in the layers list) to change its text, attributes and styles per breakpoint, hover, focus and active state, or turn it into an interactive behavior. Ask Claude to change just that element, or the whole section. Manual edits have undo/redo and are saved as versions. Switch to *Try it* to use the interactions. Preview at each breakpoint, side by side, or at any custom width, then copy the code or download HTML.
+1. **Projects.** Create a project for a site or brand, or start a quick *blank section* that uses the default design system. A project holds many sections.
+2. **Project settings.** Set the business type and description, the design system (tokens by form, pasted JSON or CSS variables, or an uploaded file), breakpoints, and defaults like the accessibility target and the CMS.
+3. **Chat.** Each section opens a workspace with a chat on the left. Describe what you need, attach reference images (paste or upload) and paste links. Claude reads the links, asks up to 3 questions only if something essential is missing, then writes a brief.
+4. **Choose.** Claude generates 3 designs in parallel, each with a different creative direction, shown on the right. Ask for 3 new options any time.
+5. **Edit and refine.** Pick one and it opens in the visual editor. Keep chatting to change it, or click an element in the preview first so the change applies only to that element. You can also edit text, attributes and per-breakpoint styles by hand, with undo/redo and versions. Switch to *Try it* to use the interactions.
+6. **Export.** Preview at each breakpoint or any width, then copy the code or download HTML.
 
 ### Structured designs
 
@@ -43,23 +41,27 @@ The API key is only used by the server routes in `src/app/api/` and is never sen
 
 All Claude calls go through `src/lib/claude.ts`. By default both generation and refinement use `claude-opus-5-5` at `medium` effort, with server-side refusal fallbacks enabled. Override with the `CLAUDE_*` variables in `.env.example`, for example `CLAUDE_GENERATE_MODEL=claude-sonnet-5-5` for faster and cheaper first drafts.
 
-## Storage
+## Storage and sign-in
 
-The MVP stores design systems and sections in the browser's `localStorage` (see `src/lib/storage.ts`). Everything goes through that module, so swapping in Supabase for shared team storage and login only touches that file plus an auth layer.
+Projects and sections go through the `Store` interface in `src/lib/storage.ts`.
+
+- **Shared (Supabase).** Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` to content-intake's Supabase project. Data lives in the `section_gen` schema (projects and sections tables, row-level security). People sign in with their content-intake account (email and password, or an emailed link when password login is off there); this app never creates accounts. Access is limited to emails matching a pattern in `section_gen.allowed_emails`, and the API routes check the same thing, so only members can spend Claude credits. The `section_gen` schema must be listed under *Exposed schemas* in the Supabase API settings.
+- **Local.** Without those variables everything stays in the browser's `localStorage` and there's no sign-in.
 
 ## Project layout
 
 ```
-src/app/api/generate   3 variants in parallel
-src/app/api/followups  clarifying questions for the brief
-src/app/api/refine     apply a change request to the current version
-src/lib/tokens.ts      token parsers (JSON, CSS vars) and CSS variable output
-src/lib/prompts.ts     system prompt and prompt builders
-src/lib/catalog.ts     business types, section types and their questions
-src/lib/export.ts      snippet and standalone page builders
-src/components/        wizard, design system editor, preview, export
+src/app/                    home, /p/[projectId], /p/[projectId]/settings, /s/[sectionId]
+src/app/api/chat            one chat turn: questions, brief + 3 designs, or a refinement
+src/app/api/refine          apply a change request to the current design
+src/lib/server/             design generation, refinement and the member check
+src/lib/scene/              scene types, compiler, runtime, validation, editor ops
+src/lib/storage.ts          local and Supabase stores
+src/lib/prompts.ts          system prompts and prompt builders
+src/components/app/         home, project, settings, workspace (chat + designs), sign-in
+src/components/editor/      visual editor
 ```
 
 ## Deploying
 
-Works on Vercel out of the box. Add `ANTHROPIC_API_KEY` in the project's environment variables. Generation routes set `maxDuration = 300` seconds.
+Works on Vercel out of the box. Add `ANTHROPIC_API_KEY`, and the two `NEXT_PUBLIC_SUPABASE_*` variables for shared storage, in the project's environment variables. In content-intake's Supabase Auth settings, add the deployed URL to the redirect URLs so emailed sign-in links work. Generation routes set `maxDuration = 300` seconds.
