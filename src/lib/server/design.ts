@@ -1,6 +1,6 @@
 import { VARIANT_DIRECTIONS } from "../catalog";
 import { checkSection } from "../check";
-import { complete, errorMessage, GENERATE_EFFORT, GENERATE_MODEL, parseSceneResponse, type PromptImage, REFINE_EFFORT, REFINE_MODEL } from "../claude";
+import { complete, errorMessage, GENERATE_EFFORT, GENERATE_MODEL, parseRefineResponse, parseSceneResponse, type PromptImage, REFINE_EFFORT, REFINE_MODEL } from "../claude";
 import { refinePrompt, SYSTEM_PROMPT, variantPrompt } from "../prompts";
 import { compileScene } from "../scene/compile";
 import type { Scene } from "../scene/types";
@@ -22,6 +22,7 @@ export async function generateVariant(
   // Every variant gets its own root class; the chosen one becomes the section's.
   const id = rootClass ? `${rootClass}-${direction.id}` : uid("sg").replace("_", "-");
   const text = await complete({
+    label: `design:${direction.id}`,
     model: GENERATE_MODEL,
     effort: GENERATE_EFFORT,
     system: SYSTEM_PROMPT,
@@ -59,6 +60,7 @@ export async function refineDesign(opts: {
   webFetch?: boolean;
 }) {
   const text = await complete({
+    label: opts.focusNodeId ? "refine:focused" : "refine",
     model: REFINE_MODEL,
     effort: REFINE_EFFORT,
     system: SYSTEM_PROMPT,
@@ -66,7 +68,8 @@ export async function refineDesign(opts: {
     images: opts.images,
     webFetch: opts.webFetch,
   });
-  const { rationale, scene } = parseSceneResponse(text);
+  const { rationale, scene, patched } = parseRefineResponse(text, opts.scene);
+  console.log(`[claude] refine returned ${patched ? "a patch" : "a full scene"}`);
   const code = compileScene(scene, { rootClass: opts.rootClass });
   return { scene, rationale, ...code, issues: checkSection(code, opts.rootClass, opts.spec) };
 }

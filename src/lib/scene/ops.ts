@@ -44,6 +44,33 @@ function mapTree(n: SceneNode, fn: (n: SceneNode) => SceneNode | null): SceneNod
   return { ...mapped, children };
 }
 
+/**
+ * Replaces each node whose id matches a patch node with that node and its subtree.
+ * Patch nodes are untrusted, so normalize the result. Returns how many patch nodes matched.
+ */
+export function applyNodePatches(scene: Scene, patches: unknown[]): { scene: Scene; applied: number } {
+  let root: unknown = scene.root;
+  let applied = 0;
+  for (const p of patches) {
+    if (!p || typeof p !== "object") continue;
+    const id = (p as { id?: unknown }).id;
+    if (typeof id !== "string") continue;
+    let hit = false;
+    const visit = (n: unknown): unknown => {
+      if (!n || typeof n !== "object") return n;
+      const node = n as { id?: unknown; children?: unknown };
+      if (node.id === id) {
+        hit = true;
+        return p;
+      }
+      return Array.isArray(node.children) ? { ...node, children: node.children.map(visit) } : n;
+    };
+    root = visit(root);
+    if (hit) applied++;
+  }
+  return { scene: { ...scene, root: root as SceneNode }, applied };
+}
+
 /** Immutable update of one node. */
 export function updateNode(scene: Scene, id: string, fn: (n: SceneNode) => SceneNode): Scene {
   return { ...scene, root: mapTree(scene.root, (n) => (n.id === id ? fn(n) : n))! };

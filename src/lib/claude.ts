@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Scene } from "./scene/types";
-import { parseSceneJson } from "./scene/validate";
+import { applyNodePatches } from "./scene/ops";
+import { normalizeScene, parseSceneJson } from "./scene/validate";
 
 // Server-only. The API key is read from ANTHROPIC_API_KEY and never sent to the browser.
 let client: Anthropic | null = null;
@@ -11,11 +12,38 @@ export function getClient(): Anthropic {
   return client;
 }
 
+// Opus writes the first 3 designs; the cheaper Sonnet handles the brief chat and refinements.
 export const GENERATE_MODEL = process.env.CLAUDE_GENERATE_MODEL || "claude-opus-5-5";
-export const REFINE_MODEL = process.env.CLAUDE_REFINE_MODEL || "claude-opus-5-5";
+export const REFINE_MODEL = process.env.CLAUDE_REFINE_MODEL || "claude-sonnet-5-5";
+export const BRIEF_MODEL = process.env.CLAUDE_BRIEF_MODEL || "claude-sonnet-5-5";
 type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 export const GENERATE_EFFORT = (process.env.CLAUDE_GENERATE_EFFORT || "medium") as Effort;
 export const REFINE_EFFORT = (process.env.CLAUDE_REFINE_EFFORT || "medium") as Effort;
+
+// USD per million tokens: [input, output, cache read, cache write (5 min)]. Only used for the cost estimate in the logs.
+const PRICES: Record<string, [number, number, number, number]> = {
+  "claude-opus-5-5": [4, 20, 0.2, 5],
+  "claude-opus-5": [5, 25, 0.5, 6.25],
+  "claude-opus-4-8": [5, 25, 0.5, 6.25],
+  "claude-sonnet-5-5": [2, 10, 0.1, 2.5],
+  "claude-sonnet-5": [2, 10, 0.2, 2.5],
+  "claude-haiku-5-5": [0.1, 0.5, 0.01, 0.125],
+};
+
+/** Logs one line per Claude call with its token counts and an estimated cost. */
+function logUsage(label: string, message: Anthropic.Beta.BetaMessage, seconds: number) {
+  const u = message.usage;
+  const input = u.input_tokens ?? 0;
+  const output = u.output_tokens ?? 0;
+  const cacheRead = u.cache_read_input_tokens ?? 0;
+  const cacheWrite = u.cache_creation_input_tokens ?? 0;
+  const price = PRICES[message.model];
+  const cost = price ? (input * price[0] + output * price[1] + cacheRead * price[2] + cacheWrite * price[3]) / 1e6 : null;
+  console.log(
+    `[claude] ${label} model=${message.model} in=${input} cache_read=${cacheRead} cache_write=${cacheWrite} out=${output}` +
+      ` stop=${message.stop_reason} ${seconds.toFixed(1)}s${cost != null ? ` ~$${cost.toFixed(4)}` : ""}`,
+  );
+}
 
 export class ClaudeRefusal extends Error {}
 
@@ -41,6 +69,8 @@ export function imagesFromDataUrls(urls: string[]): PromptImage[] {
  * With webFetch, Claude can open reference links the user shared.
  */
 export async function complete(opts: {
+  /** Short name for the usage log, e.g. "brief" or "design:clean". */
+  label: string;
   model: string;
   effort: Effort;
   system: string;
@@ -59,6 +89,7 @@ export async function complete(opts: {
   let text = "";
   // A server tool (web fetch) can pause a long turn; resume it a few times.
   for (let turn = 0; turn < 4; turn++) {
+    const started = Date.now();
     const stream = getClient().beta.messages.stream({
       model: opts.model,
       max_tokens: opts.maxTokens ?? 64000,
@@ -71,6 +102,7 @@ export async function complete(opts: {
       messages,
     });
     const message = await stream.finalMessage();
+    logUsage(turn ? `${opts.label} (turn ${turn + 1})` : opts.label, message, (Date.now() - started) / 1000);
     if (message.stop_reason === "refusal") {
       throw new ClaudeRefusal("Claude declined this request. Try rephrasing it.");
     }
@@ -97,6 +129,23 @@ export function parseSceneResponse(text: string): { name: string; rationale: str
   const end = text.lastIndexOf("</scene>");
   const body = start >= 0 && end > start ? text.slice(start + 7, end) : text;
   return { name: tag(text, "name") || "Untitled design", rationale: tag(text, "rationale"), scene: parseSceneJson(body) };
+}
+
+/**
+ * Parses a refinement: either a <patch> with only the changed nodes, merged into
+ * the current scene, or a full <scene> when Claude rewrote most of the design.
+ */
+export function parseRefineResponse(text: string, current: Scene): { rationale: string; scene: Scene; patched: boolean } {
+  const rationale = tag(text, "rationale");
+  const patchRaw = tag(text, "patch");
+  if (!patchRaw || text.includes("<scene>")) return { rationale, scene: parseSceneResponse(text).scene, patched: false };
+  const patch = JSON.parse(patchRaw.slice(patchRaw.indexOf("{"), patchRaw.lastIndexOf("}") + 1)) as { nodes?: unknown; customCss?: unknown };
+  const nodes = Array.isArray(patch.nodes) ? patch.nodes : [];
+  const { scene, applied } = applyNodePatches(current, nodes);
+  const cssChanged = typeof patch.customCss === "string";
+  if (!applied && !cssChanged) throw new Error("Claude's change didn't match any element in the design. Try rephrasing it.");
+  const merged = normalizeScene({ ...scene, customCss: cssChanged ? patch.customCss : scene.customCss });
+  return { rationale, scene: merged, patched: true };
 }
 
 export function errorMessage(err: unknown): { message: string; status: number } {
