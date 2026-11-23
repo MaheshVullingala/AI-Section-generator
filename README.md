@@ -11,7 +11,11 @@ An internal tool for designing interactive website sections with Claude. Load yo
 5. **Breakpoints.** Set the breakpoints for this section, the accessibility target, the target CMS, and whether JavaScript is allowed.
 6. **Review.** Claude checks the brief and asks up to 4 follow-up questions where something important is missing.
 7. **Choose.** Claude generates 3 variants in parallel, each with a different creative direction (clean, editorial, interaction-forward).
-8. **Refine and export.** Ask for changes in plain language or use quick actions. Each change is a new version you can go back to. Preview at each breakpoint, side by side, or at any custom width. Copy the full code, copy HTML/CSS/JS separately, or download a snippet or standalone page.
+8. **Edit, refine and export.** A visual editor: click any element in the preview (or pick it in the layers list) to change its text, attributes and styles per breakpoint, hover, focus and active state, or turn it into an interactive behavior. Ask Claude to change just that element, or the whole section. Manual edits have undo/redo and are saved as versions. Switch to *Try it* to use the interactions. Preview at each breakpoint, side by side, or at any custom width, then copy the code or download HTML.
+
+### Structured designs
+
+Claude doesn't write HTML directly. It returns a *scene*: a JSON tree of elements with styles (base, per breakpoint, hover, focus, active state) and behaviors (`src/lib/scene/types.ts`). The compiler (`src/lib/scene/compile.ts`) turns a scene into scoped HTML and CSS plus a small vanilla-JS runtime (`src/lib/scene/runtime.ts`). The runtime powers reveal, tabs, accordion, carousel, toggle, counter, modal, filter, before/after compare and parallax, with keyboard support, ARIA and reduced-motion handling. The visual editor edits the scene, so every change compiles to the same clean, paste-ready output.
 
 ### Generated code
 
