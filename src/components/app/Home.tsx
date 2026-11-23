@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { BUSINESS_TYPES } from "@/lib/catalog";
 import { blankProject, newProject, newSection, store } from "@/lib/storage";
 import type { Project, Section } from "@/lib/types";
-import { Button, Card, Field, Input, Select, Textarea } from "../ui";
+import { Button, Card, Field, Input, Select, Textarea, Waveform } from "../ui";
 import { Shell, Swatches, timeAgo } from "./Shell";
 
 export function Home() {
@@ -66,8 +66,8 @@ export function Home() {
       {error && <p className="mb-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
 
       {creating && (
-        <Card className="mb-8 max-w-2xl space-y-4">
-          <h2 className="font-semibold text-slate-900">New project</h2>
+        <Card lock className="mb-8 max-w-2xl space-y-4">
+          <h2 className="text-lg font-semibold text-slate-900">New project <span className="sg-label ml-2 align-middle">{"// setup"}</span></h2>
           <Field label="Project name">
             <Input autoFocus value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="e.g. Acme website relaunch" />
           </Field>
@@ -92,11 +92,20 @@ export function Home() {
       )}
 
       <section aria-labelledby="projects-h" className="space-y-4">
-        <h1 id="projects-h" className="text-xl font-semibold text-slate-900">
-          Projects
-        </h1>
+        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+          <h1 id="projects-h" className="text-3xl font-bold text-slate-900">
+            Projects <span className="text-indigo-600">online</span>
+          </h1>
+          {projects !== null && (
+            <span className="sg-label">
+              {"// "}{real.length} project{real.length === 1 ? "" : "s"} · {sections.length} section{sections.length === 1 ? "" : "s"}
+            </span>
+          )}
+        </div>
         {projects === null ? (
-          <p className="text-sm text-slate-500">Loading…</p>
+          <p className="sg-label flex items-center gap-2">
+            <Waveform className="h-5 w-16" /> Loading projects…
+          </p>
         ) : real.length === 0 ? (
           <Card className="flex flex-col items-start gap-3">
             <p className="text-slate-700">No projects yet. A project holds a design system and all the sections for one site or brand.</p>
@@ -109,19 +118,23 @@ export function Home() {
           </Card>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {real.map((p) => (
+            {real.map((p, i) => (
               <Link
                 key={p.id}
                 href={`/p/${p.id}`}
-                className="group rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md"
+                className="sg-lock group rounded-md border border-slate-200 bg-white p-5 transition hover:-translate-y-0.5 hover:border-slate-300 focus-visible:outline-none"
               >
-                <div className="flex items-start justify-between gap-2">
-                  <h2 className="font-semibold text-slate-900 group-hover:text-indigo-700">{p.name}</h2>
+                <p className="sg-label">
+                  PRJ-{String(i + 1).padStart(2, "0")} · {p.businessType || "Type not set"}
+                </p>
+                <div className="mt-3 flex items-start justify-between gap-2">
+                  <h2 className="text-lg font-semibold text-slate-900 group-hover:text-indigo-600">{p.name}</h2>
                   <Swatches colors={p.designSystem.colors} />
                 </div>
-                <p className="mt-1 text-sm text-slate-500">{p.businessType || "Business type not set"}</p>
-                <p className="mt-4 text-xs text-slate-500">
-                  {count(p.id)} section{count(p.id) === 1 ? "" : "s"} · updated {timeAgo(p.updatedAt)}
+                <p className="mt-1 text-sm text-slate-500">{p.designSystem.name}</p>
+                <p className="sg-label mt-5 flex items-center gap-2">
+                  <span className="sg-blink inline-block h-1.5 w-1.5 rounded-full bg-indigo-600" aria-hidden />
+                  {count(p.id)} section{count(p.id) === 1 ? "" : "s"} · {timeAgo(p.updatedAt)}
                 </p>
               </Link>
             ))}
@@ -131,15 +144,15 @@ export function Home() {
 
       {quick.length > 0 && (
         <section aria-labelledby="quick-h" className="mt-10 space-y-3">
-          <h2 id="quick-h" className="text-lg font-semibold text-slate-900">
-            Quick sections
+          <h2 id="quick-h" className="text-xl font-semibold text-slate-900">
+            Quick sections <span className="sg-label ml-2 align-middle">{"// default design system"}</span>
           </h2>
-          <ul className="divide-y divide-slate-200 rounded-xl border border-slate-200 bg-white">
+          <ul className="divide-y divide-slate-200 rounded-md border border-slate-200 bg-white">
             {quick.map((s) => (
               <li key={s.id}>
-                <Link href={`/s/${s.id}`} className="flex items-center justify-between px-4 py-3 text-sm hover:bg-slate-50">
+                <Link href={`/s/${s.id}`} className="flex items-center justify-between px-4 py-3 text-sm hover:bg-slate-100 hover:text-indigo-600">
                   <span className="font-medium text-slate-800">{s.title}</span>
-                  <span className="text-slate-500">{timeAgo(s.updatedAt)}</span>
+                  <span className="sg-label">{timeAgo(s.updatedAt)}</span>
                 </Link>
               </li>
             ))}

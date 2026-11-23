@@ -56,7 +56,7 @@ function Frame({
   const scale = Math.min(1, maxWidth / width);
   const h = maxHeight ? Math.min(height, maxHeight) : height;
   return (
-    <div style={{ width: width * scale, height: h * scale }} className="relative overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+    <div style={{ width: width * scale, height: h * scale }} className="sg-canvas relative overflow-hidden rounded border border-slate-200">
       <iframe
         ref={ref}
         name={name}
