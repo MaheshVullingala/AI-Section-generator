@@ -170,7 +170,7 @@ export function SectionEditor({
           type="button"
           aria-pressed={mode === m}
           onClick={() => setMode(m)}
-          className={cx("rounded px-2.5 py-1 text-sm", mode === m ? "bg-slate-900 text-white" : "text-slate-700")}
+          className={cx("rounded px-2.5 py-1 text-sm", mode === m ? "bg-indigo-600 text-white" : "text-slate-700")}
         >
           {m === "edit" ? "Select & edit" : "Try it"}
         </button>

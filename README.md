@@ -1,4 +1,6 @@
-# AI Section Generator
+# Forma
+
+_Ideas into Experiences._
 
 An internal tool for designing interactive website sections with Claude. Load your design system, brief the section, get three different designs, refine the one you like, preview it at your own breakpoints, then copy the code or download it as HTML for any website or CMS.
 

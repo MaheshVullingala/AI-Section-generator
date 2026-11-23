@@ -12,7 +12,7 @@ import { uid } from "@/lib/tokens";
 import type { ChatImage, ChatMessage, Project, SavedSection, Section, SectionSpec, Variant } from "@/lib/types";
 import { makeVersion, SectionEditor } from "../editor/SectionEditor";
 import { Preview } from "../Preview";
-import { Button, Card, Spinner, cx } from "../ui";
+import { Button, Card, Waveform, cx } from "../ui";
 import { Shell } from "./Shell";
 
 type VariantResult = { ok: true; variant: Variant } | { ok: false; direction: string; error: string };
@@ -106,11 +106,12 @@ function ChatBubble({ m, onPickQuestion }: { m: ChatMessage; onPickQuestion?: (q
     <div className={cx("flex", mine ? "justify-end" : "justify-start")}>
       <div
         className={cx(
-          "max-w-[90%] space-y-2 rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed",
-          mine ? "rounded-br-sm bg-indigo-600 text-white" : m.kind === "error" ? "rounded-bl-sm bg-red-50 text-red-800" : "rounded-bl-sm bg-white text-slate-800 shadow-sm ring-1 ring-slate-200",
+          "max-w-[92%] space-y-2 rounded-sm border-l-2 px-3.5 py-2.5 text-sm leading-relaxed",
+          mine ? "border-amber-700 bg-slate-100 text-slate-900" : m.kind === "error" ? "border-red-600 bg-red-50 text-red-800" : "border-indigo-600 bg-white text-slate-800",
         )}
       >
-        {m.focusNodeId && <p className={cx("text-xs", mine ? "text-indigo-100" : "text-slate-500")}>About the selected element</p>}
+        <p className="sg-label">{mine ? "You" : m.kind === "error" ? "Error" : "Claude"}</p>
+        {m.focusNodeId && <p className="sg-label text-amber-700">About the selected element</p>}
         {lines.map((l, i) =>
           l.startsWith("• ") && onPickQuestion ? (
             <p key={i} className="pl-1">
@@ -144,9 +145,9 @@ function ChatBubble({ m, onPickQuestion }: { m: ChatMessage; onPickQuestion?: (q
 
 function VariantCard({ variant: v, project, section, onChoose, disabled }: { variant: Variant; project: Project; section: Section; onChoose?: () => void; disabled?: boolean }) {
   return (
-    <Card className="flex flex-col gap-3">
+    <Card lock className="flex flex-col gap-3 p-4">
       <div>
-        <p className="text-xs font-medium uppercase tracking-wide text-indigo-600">{v.direction}</p>
+        <p className="sg-label text-indigo-600">{v.direction}</p>
         <h2 className="font-semibold text-slate-900">{v.name}</h2>
       </div>
       <Preview code={v} designSystem={project.designSystem} rootClass={v.id} breakpoints={section.spec.breakpoints} compact />
@@ -352,11 +353,11 @@ export function Workspace({ sectionId }: { sectionId: string }) {
       ]}
       actions={
         project.kind === "project" ? (
-          <Link href={`/p/${project.id}/settings`} className="rounded-md px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100">
+          <Link href={`/p/${project.id}/settings`} className="rounded px-3 py-1.5 font-mono text-xs uppercase tracking-wider text-slate-600 hover:bg-slate-100 hover:text-indigo-600">
             Design system
           </Link>
         ) : (
-          <Link href={`/p/${project.id}/settings`} className="rounded-md px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100">
+          <Link href={`/p/${project.id}/settings`} className="rounded px-3 py-1.5 font-mono text-xs uppercase tracking-wider text-slate-600 hover:bg-slate-100 hover:text-indigo-600">
             Default design system
           </Link>
         )
@@ -364,7 +365,7 @@ export function Workspace({ sectionId }: { sectionId: string }) {
     >
       <div className="grid min-h-[calc(100vh-3.5rem)] lg:grid-cols-[380px_1fr]">
         {/* Chat */}
-        <aside className="flex flex-col border-slate-200 bg-slate-50 lg:sticky lg:top-14 lg:h-[calc(100vh-3.5rem)] lg:border-r" aria-label="Chat">
+        <aside className="flex flex-col border-slate-200 bg-slate-50/90 backdrop-blur lg:sticky lg:top-14 lg:h-[calc(100vh-3.5rem)] lg:border-r" aria-label="Chat">
           <div ref={listRef} className="flex-1 space-y-3 overflow-y-auto p-4" aria-live="polite">
             {!section.messages.length && (
               <div className="space-y-3">
@@ -374,7 +375,8 @@ export function Workspace({ sectionId }: { sectionId: string }) {
                 </p>
                 <div className="space-y-1.5">
                   {STARTERS.map((s) => (
-                    <button key={s} onClick={() => setText(s)} className="block w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-sm text-slate-700 hover:border-indigo-300">
+                    <button key={s} onClick={() => setText(s)} className="block w-full rounded border border-slate-200 bg-white px-3 py-2 text-left text-sm text-slate-700 transition hover:border-indigo-600 hover:text-slate-900">
+                      <span className="mr-1.5 font-mono text-indigo-600" aria-hidden>&gt;</span>
                       {s}
                     </button>
                   ))}
@@ -386,7 +388,7 @@ export function Workspace({ sectionId }: { sectionId: string }) {
             ))}
             {busy && (
               <div className="flex items-center gap-2 text-sm text-slate-500">
-                <Spinner />
+                <Waveform className="h-5 w-14 shrink-0" />
                 <span>{busy === "thinking" ? "Reading your brief…" : busy === "designing" ? `Designing 3 options, ${partial.length} of 3 ready (usually 1 to 3 minutes)…` : "Updating the design…"}</span>
                 <Elapsed key={busy} />
               </div>
@@ -394,14 +396,14 @@ export function Workspace({ sectionId }: { sectionId: string }) {
           </div>
 
           <form
-            className="border-t border-slate-200 bg-white p-3"
+            className="border-t border-slate-200 bg-slate-50 p-3"
             onSubmit={(e) => {
               e.preventDefault();
               send();
             }}
           >
             {focus && (
-              <div className="mb-2 flex items-center justify-between rounded-md bg-indigo-50 px-2 py-1 text-xs text-indigo-800">
+              <div className="mb-2 flex items-center justify-between rounded bg-indigo-50 px-2 py-1 font-mono text-xs text-indigo-800">
                 <span>Targeting: {focusName}</span>
                 <button type="button" className="underline" onClick={() => setSelected(null)}>
                   Whole section
@@ -445,7 +447,7 @@ export function Workspace({ sectionId }: { sectionId: string }) {
               rows={3}
               aria-label="Message"
               placeholder={placeholder}
-              className="w-full resize-none rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+              className="w-full resize-none rounded border border-slate-300 bg-white px-3 py-2 font-mono text-[13px] placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
             />
             <div className="mt-2 flex items-center justify-between">
               <div>
@@ -453,7 +455,7 @@ export function Workspace({ sectionId }: { sectionId: string }) {
                 <Button type="button" variant="ghost" className="px-2 py-1 text-xs" onClick={() => fileRef.current?.click()} disabled={images.length >= 4}>
                   + Images
                 </Button>
-                <span className="text-xs text-slate-400">Paste links in your message</span>
+                <span className="sg-label">Paste links in your message</span>
               </div>
               <Button type="submit" disabled={!!busy || (!text.trim() && !images.length)} className="px-3 py-1.5">
                 Send
@@ -467,7 +469,15 @@ export function Workspace({ sectionId }: { sectionId: string }) {
           {showOptions ? (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h1 className="text-lg font-semibold text-slate-900">{section.variants.length ? "Choose a design" : section.title}</h1>
+                <h1 className="text-xl font-semibold text-slate-900">
+                  {section.variants.length ? (
+                    <>
+                      Choose a design <span className="sg-label ml-2 align-middle text-indigo-600">select [1–3]</span>
+                    </>
+                  ) : (
+                    section.title
+                  )}
+                </h1>
                 <div className="flex gap-2">
                   {hasDesign && (
                     <Button variant="secondary" onClick={() => setView("editor")}>
@@ -487,7 +497,10 @@ export function Workspace({ sectionId }: { sectionId: string }) {
                     <VariantCard key={v.id} variant={v} project={project} section={section} disabled />
                   ))}
                   {Array.from({ length: Math.max(0, VARIANT_DIRECTIONS.length - partial.length) }, (_, i) => (
-                    <div key={i} className="h-80 animate-pulse rounded-xl bg-slate-200/70" />
+                    <div key={i} className="sg-scan flex h-80 flex-col items-center justify-center gap-3 rounded-md border border-slate-200 bg-white">
+                      <Waveform className="h-16 w-3/4" />
+                      <span className="sg-label text-amber-700">Generating…</span>
+                    </div>
                   ))}
                 </div>
               ) : section.variants.length ? (
@@ -497,9 +510,10 @@ export function Workspace({ sectionId }: { sectionId: string }) {
                   ))}
                 </div>
               ) : (
-                <Card className="grid min-h-80 place-items-center text-center">
+                <Card className="grid min-h-80 place-items-center border-dashed text-center">
                   <div className="max-w-md space-y-2">
-                    <p className="font-medium text-slate-900">Your 3 designs will appear here</p>
+                    <p className="sg-label text-indigo-600">Awaiting input</p>
+                    <p className="font-display text-lg font-semibold text-slate-900">Your 3 designs will appear here</p>
                     <p className="text-sm text-slate-600">Describe the section in the chat. Reference images and links help Claude match the look you want.</p>
                   </div>
                 </Card>

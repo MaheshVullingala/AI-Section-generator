@@ -48,7 +48,7 @@ export function ExportPanel({ code, designSystem, rootClass, title }: { code: Se
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={cx("rounded-md px-3 py-1.5 text-sm", tab === t ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700")}
+            className={cx("rounded-md px-3 py-1.5 text-sm", tab === t ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-700")}
           >
             {label}
           </button>

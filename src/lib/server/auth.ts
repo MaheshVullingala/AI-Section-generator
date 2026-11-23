@@ -28,6 +28,6 @@ export async function requireMember(request: Request): Promise<Response | null> 
   const { data: user, error } = await client.auth.getUser(token);
   if (error || !user.user) return Response.json({ error: "Your session has expired. Please sign in again." }, { status: 401 });
   const { data: member } = await client.schema("section_gen").rpc("is_member");
-  if (member !== true) return Response.json({ error: "Your account doesn't have access to the section generator." }, { status: 403 });
+  if (member !== true) return Response.json({ error: "Your account doesn't have access to Forma." }, { status: 403 });
   return null;
 }

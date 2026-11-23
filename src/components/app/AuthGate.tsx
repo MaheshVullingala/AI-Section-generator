@@ -2,6 +2,8 @@
 import type { Session } from "@supabase/supabase-js";
 import { createContext, useContext, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { sg, supabase } from "@/lib/supabase";
+import { Logo } from "../ui";
+import { Traces } from "./Shell";
 
 type Access = "loading" | "signed-out" | "no-access" | "ok";
 const SessionContext = createContext<Session | null>(null);
@@ -43,7 +45,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return (
       <Centered title="No access yet">
         <p className="text-sm text-slate-600">
-          You&apos;re signed in as <strong>{session?.user.email}</strong>, but this account isn&apos;t on the section generator&apos;s access list. Ask Mahesh to add you.
+          You&apos;re signed in as <strong>{session?.user.email}</strong>, but this account isn&apos;t on Forma&apos;s access list. Ask Mahesh to add you.
         </p>
         <button className="mt-4 text-sm font-medium text-indigo-600 hover:underline" onClick={() => supabase!.auth.signOut()}>
           Sign in with another account
@@ -55,12 +57,14 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
 function Centered({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="grid min-h-screen place-items-center bg-slate-50 px-4">
-      <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-5 flex items-center gap-2 font-semibold text-slate-900">
-          <span className="grid h-7 w-7 place-items-center rounded-md bg-indigo-600 text-xs font-bold text-white">SG</span>
-          Section Generator
+    <div className="relative grid min-h-screen place-items-center bg-slate-50 px-4">
+      <Traces />
+      <div className="sg-lock relative z-10 w-full max-w-sm rounded-md border border-slate-200 bg-white p-6">
+        <div className="mb-5 flex items-center gap-2.5 font-display font-bold uppercase tracking-wider text-slate-900">
+          <Logo />
+          Forma
         </div>
+        <p className="sg-label -mt-3 mb-5">Ideas into Experiences</p>
         <h1 className="mb-2 text-lg font-semibold text-slate-900">{title}</h1>
         {children}
       </div>
@@ -114,16 +118,16 @@ function SignIn() {
       <form onSubmit={submit} className="space-y-3">
         <label className="block text-sm">
           <span className="mb-1 block font-medium text-slate-700">Work email</span>
-          <input type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+          <input type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full rounded border border-slate-300 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-600/20" />
         </label>
         {mode === "password" && (
           <label className="block text-sm">
             <span className="mb-1 block font-medium text-slate-700">Password</span>
-            <input type="password" required autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+            <input type="password" required autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full rounded border border-slate-300 bg-slate-50 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-600/20" />
           </label>
         )}
         {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
-        <button disabled={busy} className="w-full rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60">
+        <button disabled={busy} className="sg-glow w-full rounded bg-indigo-600 px-3 py-2 font-mono text-xs font-medium uppercase tracking-wider text-white hover:bg-indigo-500 disabled:opacity-60">
           {busy ? "Signing in…" : mode === "password" ? "Sign in" : "Email me a sign-in link"}
         </button>
       </form>
@@ -141,9 +145,9 @@ export function AccountMenu() {
   const session = useSession();
   if (!supabase || !session) return null;
   return (
-    <div className="flex items-center gap-2 border-l border-slate-200 pl-3 text-xs text-slate-500">
+    <div className="flex items-center gap-2 border-l border-slate-200 pl-3 font-mono text-[11px] text-slate-500">
       <span className="hidden max-w-40 truncate sm:inline">{session.user.email}</span>
-      <button className="rounded px-2 py-1 font-medium text-slate-700 hover:bg-slate-100" onClick={() => supabase!.auth.signOut()}>
+      <button className="rounded px-2 py-1 font-medium uppercase tracking-wider text-slate-700 hover:bg-slate-100 hover:text-indigo-600" onClick={() => supabase!.auth.signOut()}>
         Sign out
       </button>
     </div>

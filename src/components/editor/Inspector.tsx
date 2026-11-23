@@ -214,7 +214,7 @@ export function Inspector({
                 onClick={() => setTarget(t)}
                 className={cx(
                   "rounded px-2 py-1 text-xs",
-                  same(t, target) ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200",
+                  same(t, target) ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200",
                   has && !same(t, target) && "ring-1 ring-indigo-300",
                 )}
               >
