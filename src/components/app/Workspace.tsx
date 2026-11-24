@@ -1,4 +1,5 @@
 "use client";
+import { allowanceLevel, publishAllowance, useAllowance } from "@/lib/allowance";
 import { authHeaders } from "@/lib/supabase";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -9,11 +10,12 @@ import type { Scene } from "@/lib/scene/types";
 import { store } from "@/lib/storage";
 import { VARIANT_DIRECTIONS } from "@/lib/catalog";
 import { uid } from "@/lib/tokens";
-import type { ChatImage, ChatMessage, Project, SavedSection, Section, SectionSpec, Variant } from "@/lib/types";
+import type { Allowance, ChatImage, ChatMessage, Project, SavedSection, Section, SectionSpec, Variant } from "@/lib/types";
 import { makeVersion, SectionEditor } from "../editor/SectionEditor";
 import { Preview } from "../Preview";
 import { Button, Card, Waveform, cx } from "../ui";
 import { Shell } from "./Shell";
+import { AllowanceNotice } from "./Usage";
 
 type VariantResult = { ok: true; variant: Variant } | { ok: false; direction: string; error: string };
 type ChatResponse =
@@ -76,7 +78,9 @@ async function callChat(payload: { section: Section } & Record<string, unknown>,
       body: JSON.stringify({ ...payload, section: slimSection(payload.section) }),
       signal: controller.signal,
     });
-    const data = (await res.json().catch(() => ({}))) as ChatResponse & { error?: string };
+    const data = (await res.json().catch(() => ({}))) as ChatResponse & { error?: string; allowance?: Allowance };
+    // Every reply carries the updated monthly allowance; share it with the meters.
+    publishAllowance(data.allowance);
     if (!res.ok || data.error) {
       if (res.status === 413) throw new Error("That message is too large to send. Try fewer or smaller images.");
       if (res.status === 504) throw new Error("The server ran out of time on this request. Try again, or ask for a smaller change.");
@@ -179,6 +183,8 @@ export function Workspace({ sectionId }: { sectionId: string }) {
   /** Designs that have arrived while the others are still generating. */
   const [partial, setPartial] = useState<Variant[]>([]);
   const [selected, setSelected] = useState<{ id: string; name: string } | null>(null);
+  const [allowance] = useAllowance();
+  const overAllowance = allowanceLevel(allowance) === "over";
   // Premium (Opus) is off by default and remembered per browser. The composer only
   // renders after the section loads in the browser, so reading storage here is safe.
   const [premium, setPremium] = useState(() => {
@@ -288,7 +294,7 @@ export function Workspace({ sectionId }: { sectionId: string }) {
 
   const send = async (opts: { action?: "auto" | "regenerate"; overrideText?: string } = {}) => {
     const body = (opts.overrideText ?? text).trim();
-    if (busy || (!body && !images.length && opts.action !== "regenerate")) return;
+    if (busy || overAllowance || (!body && !images.length && opts.action !== "regenerate")) return;
     let next = section;
     if (opts.action !== "regenerate" || body) {
       const user = msg("user", body || "(reference images)", { images: images.length ? images : undefined, links: extractLinks(body), focusNodeId: focus });
@@ -421,6 +427,11 @@ export function Workspace({ sectionId }: { sectionId: string }) {
             )}
           </div>
 
+          {allowanceLevel(allowance) !== "ok" && allowanceLevel(allowance) !== "none" && (
+            <div className="border-t border-slate-200 bg-slate-50 px-3 pt-3">
+              <AllowanceNotice allowance={allowance} />
+            </div>
+          )}
           <form
             className="border-t border-slate-200 bg-slate-50 p-3"
             onSubmit={(e) => {
@@ -481,18 +492,19 @@ export function Workspace({ sectionId }: { sectionId: string }) {
                 <Button type="button" variant="ghost" className="px-2 py-1 text-xs" onClick={() => fileRef.current?.click()} disabled={images.length >= 4}>
                   + Images
                 </Button>
-                <span className="sg-label">Paste links in your message</span>
               </div>
-              <label
-                className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-600"
-                title="Premium uses Claude Opus for designs and changes. It can give stronger results and costs about twice as much."
-              >
-                <input type="checkbox" checked={premium} onChange={(e) => setPremiumPref(e.target.checked)} className="accent-amber-600" />
-                Premium
-              </label>
-              <Button type="submit" disabled={!!busy || (!text.trim() && !images.length)} className="px-3 py-1.5">
-                Send
-              </Button>
+              <div className="flex shrink-0 items-center gap-3">
+                <label
+                  className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-600"
+                  title="Premium uses Claude Opus for designs and changes. It can give stronger results and costs about twice as much."
+                >
+                  <input type="checkbox" checked={premium} onChange={(e) => setPremiumPref(e.target.checked)} className="accent-amber-700" />
+                  Premium
+                </label>
+                <Button type="submit" disabled={!!busy || overAllowance || (!text.trim() && !images.length)} className="px-3 py-1.5">
+                  Send
+                </Button>
+              </div>
             </div>
           </form>
         </aside>
@@ -518,7 +530,7 @@ export function Workspace({ sectionId }: { sectionId: string }) {
                     </Button>
                   )}
                   {!!section.brief && (
-                    <Button variant="secondary" onClick={() => send({ action: "regenerate" })} disabled={!!busy}>
+                    <Button variant="secondary" onClick={() => send({ action: "regenerate" })} disabled={!!busy || overAllowance}>
                       3 new options
                     </Button>
                   )}

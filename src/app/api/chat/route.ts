@@ -1,8 +1,9 @@
 import { BRIEF_MODEL, BRIEF_WEB_MODEL, complete, errorMessage, imagesFromDataUrls } from "@/lib/claude";
 import { BRIEF_SYSTEM, briefPrompt, specFromBrief } from "@/lib/prompts";
 import type { Scene } from "@/lib/scene/types";
-import { requireMember } from "@/lib/server/auth";
+import { authorize } from "@/lib/server/auth";
 import { generateVariants, refineDesign } from "@/lib/server/design";
+import { checkAllowance, usageRecorder } from "@/lib/server/usage";
 import type { ChatMessage, Project, Section } from "@/lib/types";
 
 export const maxDuration = 300;
@@ -44,11 +45,18 @@ function transcript(messages: ChatMessage[]): string {
  * is applied as a refinement to the current design.
  */
 export async function POST(request: Request) {
-  const denied = await requireMember(request);
-  if (denied) return denied;
+  const auth = await authorize(request);
+  if ("denied" in auth) return auth.denied;
+  const { member } = auth;
   const body = (await request.json()) as ChatRequest;
   const { project, section, action = "auto", scene, focusNodeId, direction, premium = false } = body;
   if (!project || !section) return Response.json({ error: "project and section are required" }, { status: 400 });
+  // Stop before calling Claude if this month's allowance is used up.
+  const check = await checkAllowance(member);
+  if ("denied" in check) return check.denied;
+  const usage = usageRecorder(member, { projectId: project.id, sectionId: section.id, premium });
+  // Every reply carries the updated allowance, so the browser can show warnings.
+  const reply = async (data: Record<string, unknown>, init?: ResponseInit) => Response.json({ ...data, allowance: await usage.flush() }, init);
   const last = section.messages[section.messages.length - 1];
   // The client strips older images to keep requests small, leaving empty data URLs.
   const userImages = section.messages.filter((m) => m.role === "user").flatMap((m) => (m.images ?? []).filter((i) => i.dataUrl));
@@ -70,19 +78,20 @@ export async function POST(request: Request) {
         images: imagesFromDataUrls((last.images ?? []).map((i) => i.dataUrl)),
         webFetch: links.length > 0,
         premium,
+        onUsage: usage.onUsage,
       });
       log("refined");
-      return Response.json({ type: "refined", message: result.rationale || "Done. I've updated the design.", ...result });
+      return reply({ type: "refined", message: result.rationale || "Done. I've updated the design.", ...result });
     }
 
     // Regenerate from the existing brief.
     if (action === "regenerate" && section.brief) {
       const spec = specFromBrief(project, section.brief, section.spec);
-      const variants = await generateVariants(project.designSystem, spec, imagesFromDataUrls(userImages.slice(-4).map((i) => i.dataUrl)), section.id, direction, { premium });
+      const variants = await generateVariants(project.designSystem, spec, imagesFromDataUrls(userImages.slice(-4).map((i) => i.dataUrl)), section.id, direction, { premium, onUsage: usage.onUsage });
       log(`designed ${direction ?? "all"} (${variants.filter((v) => v.ok).length}/${variants.length} ok)`);
       for (const v of variants) if (!v.ok) console.error(`[chat] ${section.id} ${v.direction} failed: ${v.error}`);
-      if (variants.every((v) => !v.ok)) return Response.json({ error: (variants[0] as { error: string }).error }, { status: 502 });
-      return Response.json({ type: "variants", message: "", variants, spec });
+      if (variants.every((v) => !v.ok)) return reply({ error: (variants[0] as { error: string }).error }, { status: 502 });
+      return reply({ type: "variants", message: "", variants, spec });
     }
 
     if (action === "regenerate") return Response.json({ error: "Describe the section in the chat first." }, { status: 400 });
@@ -99,6 +108,7 @@ export async function POST(request: Request) {
       images: imagesFromDataUrls(userImages.slice(-4).map((i) => i.dataUrl)),
       webFetch: links.length > 0,
       maxTokens: 16000,
+      onUsage: usage.onUsage,
     });
     const message = tag(text, "message") || "Got it.";
     const questionsRaw = tag(text, "questions");
@@ -112,17 +122,18 @@ export async function POST(request: Request) {
         questions = [questionsRaw];
       }
       log("asked questions");
-      return Response.json({ type: "questions", message, questions });
+      return reply({ type: "questions", message, questions });
     }
     if (!briefRaw) throw new Error("Claude didn't return a brief or questions. Try sending your message again.");
     const brief = JSON.parse(briefRaw.slice(briefRaw.indexOf("{"), briefRaw.lastIndexOf("}") + 1)) as Record<string, unknown>;
     const spec = specFromBrief(project, brief, section.spec);
     log("brief written");
     // The client asks for the designs in a second request, so it can show progress.
-    return Response.json({ type: "brief", message, brief, spec, title: typeof brief.title === "string" ? brief.title : undefined });
+    return reply({ type: "brief", message, brief, spec, title: typeof brief.title === "string" ? brief.title : undefined });
   } catch (err) {
     const { message, status } = errorMessage(err);
     console.error(`[chat] ${section.id} failed after ${((Date.now() - started) / 1000).toFixed(1)}s:`, err);
-    return Response.json({ error: message }, { status });
+    // A call that failed after Claude answered (e.g. an unreadable design) still cost tokens.
+    return reply({ error: message }, { status });
   }
 }

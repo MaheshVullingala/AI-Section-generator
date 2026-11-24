@@ -77,6 +77,17 @@ Every Claude call logs one line with its token counts and an estimated cost, for
 
 On Vercel, find these under the project's Logs, filtered by `[claude]`.
 
+## Usage allowances
+
+With Supabase set up, every Claude call is saved to `section_gen.usage_events` with its tokens (input, output, cache read, cache write), estimated cost and cache savings, per person, project, section and model. Run `supabase/usage_allowances.sql` once in the Supabase SQL editor to create the tables.
+
+- Each person has a monthly allowance in USD, set by role: Creator $10, Designer $20, Developer $20, Reviewer $3, Admin no limit. People without a role are Creators. Admins can change the role defaults, give someone a personal allowance, and set the team budget ($200 by default).
+- The header shows this month's spend. The chat warns at 70% and 90%. At 100% Claude requests pause (the API returns 402) and the person can send a **Request more**, which an admin approves or declines on the usage page. An approved amount adds to that person's limit for the month.
+- `/usage` shows your own usage. Admins also see team spend against the budget, tokens and cache savings, premium (Opus) spend, alerts (people near their limit, sections regenerated many times), pending requests, people, and spend by job, model and project.
+- Admins are people with the `admin` role in `section_gen.user_roles`. The first admin is superadmin@gmail.com.
+
+If the usage tables are missing, the app keeps working and logs `[usage]` errors, without tracking or limits.
+
 ## Storage and sign-in
 
 Projects and sections go through the `Store` interface in `src/lib/storage.ts`.

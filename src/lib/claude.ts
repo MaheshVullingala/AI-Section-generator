@@ -57,6 +57,8 @@ export interface CallUsage {
   cacheWrite: number;
   /** Estimated USD, or null for a model without a known price. */
   cost: number | null;
+  /** What the cached input tokens would have cost uncached, minus what they did cost. */
+  cacheSavings: number;
 }
 
 /** Token counts from a response and their estimated cost. */
@@ -69,7 +71,8 @@ export function usageOf(message: Anthropic.Beta.BetaMessage): CallUsage {
   const prompt = input + cacheRead + cacheWrite;
   const price = message.model.startsWith("claude-haiku-5-5") && prompt > 100_000 ? HAIKU_LONG : PRICES[message.model];
   const cost = price ? (input * price[0] + output * price[1] + cacheRead * price[2] + cacheWrite * price[3]) / 1e6 : null;
-  return { model: message.model, input, output, cacheRead, cacheWrite, cost };
+  const cacheSavings = price ? (cacheRead * (price[0] - price[2])) / 1e6 : 0;
+  return { model: message.model, input, output, cacheRead, cacheWrite, cost, cacheSavings };
 }
 
 /** Logs one line per Claude call with its token counts and an estimated cost. */
@@ -126,8 +129,8 @@ export async function complete(opts: {
   cacheImages?: boolean;
   webFetch?: boolean;
   maxTokens?: number;
-  /** Receives the token usage of every API call this request makes. */
-  onUsage?: (usage: CallUsage) => void;
+  /** Receives the token usage of every API call this request makes, with its label. */
+  onUsage?: (usage: CallUsage, label: string) => void;
 }): Promise<string> {
   try {
     return await run(opts);
@@ -167,7 +170,7 @@ async function run(opts: Parameters<typeof complete>[0]): Promise<string> {
     });
     const message = await stream.finalMessage();
     const usage = logUsage(turn ? `${opts.label} (turn ${turn + 1})` : opts.label, message, (Date.now() - started) / 1000);
-    opts.onUsage?.(usage);
+    opts.onUsage?.(usage, opts.label);
     if (message.stop_reason === "refusal") {
       throw new ClaudeRefusal("Claude declined this request. Try rephrasing it.");
     }

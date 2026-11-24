@@ -146,3 +146,19 @@ export interface Section extends SavedSection {
   /** The brief Claude assembled from the chat, once it had enough to design. */
   brief?: Record<string, unknown>;
 }
+
+/** A person's Claude allowance for the current month (from section_gen.my_allowance()). */
+export interface Allowance {
+  role: string;
+  /** USD for the month including approved extra, or null for no limit. */
+  limit_usd: number | null;
+  base_usd: number | null;
+  extra_usd: number;
+  /** Extra USD requested and waiting for an admin. */
+  pending_usd: number;
+  spent_usd: number;
+  /** Fractions of the limit at which to warn, e.g. [0.7, 0.9]. */
+  warn_at: number[];
+  /** First day of the month, YYYY-MM-DD. */
+  month: string;
+}

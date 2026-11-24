@@ -18,7 +18,7 @@ export async function generateVariant(
   direction: (typeof VARIANT_DIRECTIONS)[number],
   images: PromptImage[] = [],
   rootClass?: string,
-  opts: { premium?: boolean; onUsage?: (u: CallUsage) => void } = {},
+  opts: { premium?: boolean; onUsage?: (u: CallUsage, label: string) => void } = {},
 ): Promise<Variant> {
   // Every variant gets its own root class; the chosen one becomes the section's.
   const id = rootClass ? `${rootClass}-${direction.id}` : uid("sg").replace("_", "-");
@@ -50,7 +50,7 @@ export async function generateVariants(
   images: PromptImage[] = [],
   rootClass?: string,
   only?: string,
-  opts: { premium?: boolean; onUsage?: (u: CallUsage) => void } = {},
+  opts: { premium?: boolean; onUsage?: (u: CallUsage, label: string) => void } = {},
 ): Promise<VariantResult[]> {
   const directions = only ? VARIANT_DIRECTIONS.filter((d) => d.id === only) : VARIANT_DIRECTIONS;
   if (!directions.length) return [{ ok: false, direction: only ?? "", error: `Unknown design direction "${only}".` }];
@@ -71,7 +71,7 @@ export async function refineDesign(opts: {
   images?: PromptImage[];
   webFetch?: boolean;
   premium?: boolean;
-  onUsage?: (u: CallUsage) => void;
+  onUsage?: (u: CallUsage, label: string) => void;
 }) {
   const text = await complete({
     label: opts.focusNodeId ? "refine:focused" : "refine",
