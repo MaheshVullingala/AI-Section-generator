@@ -51,12 +51,21 @@ The app is a standard Next.js server, so it runs on Vercel or on any Node.js hos
 
 ## Models
 
-All Claude calls go through `src/lib/claude.ts`, with server-side refusal fallbacks enabled. By default:
+All Claude calls go through `src/lib/claude.ts`. By default:
 
-- The 3 first designs use `claude-opus-5-5` at `medium` effort.
-- Refinements and the brief chat (questions and brief) use `claude-sonnet-5-5`, at half the price.
+| Job | Model | Env variable |
+|---|---|---|
+| The 3 designs | `claude-sonnet-5-5`, `medium` effort | `CLAUDE_GENERATE_MODEL` |
+| Refinements | `claude-sonnet-5-5`, `medium` effort | `CLAUDE_REFINE_MODEL` |
+| Brief chat (questions and brief) | `claude-haiku-5-5`, `low` effort | `CLAUDE_BRIEF_MODEL` |
+| Brief chat when the message has links to open | `claude-sonnet-5-5` | `CLAUDE_BRIEF_WEB_MODEL` |
+| Designs and refinements with **Premium** ticked | `claude-opus-5-5` | `CLAUDE_PREMIUM_MODEL` |
 
-Override with the `CLAUDE_*` variables in `.env.example`, for example `CLAUDE_REFINE_MODEL=claude-opus-5-5` to refine with Opus again.
+The **Premium** checkbox under the chat box switches designs and refinements to Opus, which costs about twice as much as Sonnet. Set `CLAUDE_PREMIUM_ENABLED=false` to ignore it on a server.
+
+Sonnet and Opus calls use server-side refusal fallbacks. Haiku has none, so a declined Haiku request is retried once on Sonnet.
+
+**Prompt caching.** The system prompt, and the design system plus brief for the section, sit before cache breakpoints. Repeats within 5 minutes are billed at the cache-read rate (5% of the input price on Sonnet 5.5 and Opus 5.5). The 3 designs share the design system, brief and reference images, so the browser starts the 2nd and 3rd designs 6 seconds after the 1st: a cache entry can only be read once the first request has started answering. Refinements of the same section reuse the cached context too. Check `cache_read` in the usage log.
 
 Refinements ask Claude to return only the changed elements (a patch), which the server merges into the current design. Claude can still return a full design when a change reshapes most of it.
 
@@ -67,6 +76,17 @@ Every Claude call logs one line with its token counts and an estimated cost, for
 ```
 
 On Vercel, find these under the project's Logs, filtered by `[claude]`.
+
+## Usage allowances
+
+With Supabase set up, every Claude call is saved to `section_gen.usage_events` with its tokens (input, output, cache read, cache write), estimated cost and cache savings, per person, project, section and model. Run `supabase/usage_allowances.sql` once in the Supabase SQL editor to create the tables.
+
+- Each person has a monthly allowance in USD, set by role: Creator $10, Designer $20, Developer $20, Reviewer $3, Admin no limit. People without a role are Creators. Admins can change the role defaults, give someone a personal allowance, and set the team budget ($200 by default).
+- The header shows this month's spend. The chat warns at 70% and 90%. At 100% Claude requests pause (the API returns 402) and the person can send a **Request more**, which an admin approves or declines on the usage page. An approved amount adds to that person's limit for the month.
+- `/usage` shows your own usage. Admins also see team spend against the budget, tokens and cache savings, premium (Opus) spend, alerts (people near their limit, sections regenerated many times), pending requests, people, and spend by job, model and project.
+- Admins are people with the `admin` role in `section_gen.user_roles`. The first admin is superadmin@gmail.com.
+
+If the usage tables are missing, the app keeps working and logs `[usage]` errors, without tracking or limits.
 
 ## Storage and sign-in
 

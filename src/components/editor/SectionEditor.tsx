@@ -1,4 +1,5 @@
 "use client";
+import { publishAllowance } from "@/lib/allowance";
 import { authHeaders } from "@/lib/supabase";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { checkSection, fixIssuesInstruction } from "@/lib/check";
@@ -6,7 +7,7 @@ import { compileScene } from "@/lib/scene/compile";
 import { duplicateNode, findNode, findParent, moveNode, removeNode, updateNode } from "@/lib/scene/ops";
 import type { Scene } from "@/lib/scene/types";
 import { uid } from "@/lib/tokens";
-import type { DesignSystem, SavedSection, SectionCode, SectionVersion } from "@/lib/types";
+import type { Allowance, DesignSystem, SavedSection, SectionCode, SectionVersion } from "@/lib/types";
 import { ExportPanel } from "../ExportPanel";
 import { Preview } from "../Preview";
 import { Button, Card, Spinner, Textarea, cx } from "../ui";
@@ -30,6 +31,7 @@ export function makeVersion(code: SectionCode, instruction: string, issues: stri
 async function postJson<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) }, body: JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
+  publishAllowance((data as { allowance?: Allowance }).allowance);
   if (!res.ok) throw new Error((data as { error?: string }).error || `Request failed (${res.status})`);
   return data as T;
 }

@@ -3,6 +3,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { Logo } from "../ui";
 import { AccountMenu } from "./AuthGate";
+import { UsageMeter } from "./Usage";
 
 /** Circuit traces behind the app. Pulses of light travel along two of them. */
 export function Traces() {
@@ -45,6 +46,7 @@ export function Shell({ children, crumbs, actions, wide }: { children: ReactNode
           ))}
           <div className="ml-auto flex items-center gap-2">
             {actions}
+            <UsageMeter />
             <AccountMenu />
           </div>
         </div>

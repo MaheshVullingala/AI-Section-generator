@@ -1,4 +1,5 @@
 "use client";
+import { allowanceLevel, publishAllowance, useAllowance } from "@/lib/allowance";
 import { authHeaders } from "@/lib/supabase";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -9,11 +10,12 @@ import type { Scene } from "@/lib/scene/types";
 import { store } from "@/lib/storage";
 import { VARIANT_DIRECTIONS } from "@/lib/catalog";
 import { uid } from "@/lib/tokens";
-import type { ChatImage, ChatMessage, Project, SavedSection, Section, SectionSpec, Variant } from "@/lib/types";
+import type { Allowance, ChatImage, ChatMessage, Project, SavedSection, Section, SectionSpec, Variant } from "@/lib/types";
 import { makeVersion, SectionEditor } from "../editor/SectionEditor";
 import { Preview } from "../Preview";
 import { Button, Card, Waveform, cx } from "../ui";
 import { Shell } from "./Shell";
+import { AllowanceNotice } from "./Usage";
 
 type VariantResult = { ok: true; variant: Variant } | { ok: false; direction: string; error: string };
 type ChatResponse =
@@ -31,6 +33,15 @@ const STARTERS = [
 
 /** Longest we wait for one chat request before showing an error. Each design is its own request. */
 const TIMEOUTS = { thinking: 3 * 60_000, designing: 6 * 60_000, refining: 6 * 60_000 } as const;
+
+/**
+ * The 2nd and 3rd designs start this long after the 1st. They share the design system,
+ * brief and images with it, and a prompt cache entry can only be read once the first
+ * request has started answering, so a short head start lets them pay the cached rate.
+ */
+const CACHE_HEAD_START_MS = 6_000;
+
+const PREMIUM_KEY = "forma.premium";
 
 /** Claude only sees the newest reference images (see /api/chat), so older ones aren't uploaded. */
 const MAX_SENT_IMAGES = 4;
@@ -67,7 +78,9 @@ async function callChat(payload: { section: Section } & Record<string, unknown>,
       body: JSON.stringify({ ...payload, section: slimSection(payload.section) }),
       signal: controller.signal,
     });
-    const data = (await res.json().catch(() => ({}))) as ChatResponse & { error?: string };
+    const data = (await res.json().catch(() => ({}))) as ChatResponse & { error?: string; allowance?: Allowance };
+    // Every reply carries the updated monthly allowance; share it with the meters.
+    publishAllowance(data.allowance);
     if (!res.ok || data.error) {
       if (res.status === 413) throw new Error("That message is too large to send. Try fewer or smaller images.");
       if (res.status === 504) throw new Error("The server ran out of time on this request. Try again, or ask for a smaller change.");
@@ -170,6 +183,23 @@ export function Workspace({ sectionId }: { sectionId: string }) {
   /** Designs that have arrived while the others are still generating. */
   const [partial, setPartial] = useState<Variant[]>([]);
   const [selected, setSelected] = useState<{ id: string; name: string } | null>(null);
+  const [allowance] = useAllowance();
+  const overAllowance = allowanceLevel(allowance) === "over";
+  // Premium (Opus) is off by default and remembered per browser. The composer only
+  // renders after the section loads in the browser, so reading storage here is safe.
+  const [premium, setPremium] = useState(() => {
+    try {
+      return typeof window !== "undefined" && localStorage.getItem(PREMIUM_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const setPremiumPref = (on: boolean) => {
+    setPremium(on);
+    try {
+      localStorage.setItem(PREMIUM_KEY, on ? "1" : "0");
+    } catch {}
+  };
   const workingScene = useRef<Scene | undefined>(undefined);
   const listRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -236,9 +266,10 @@ export function Workspace({ sectionId }: { sectionId: string }) {
     const errors: string[] = [];
     let spec = next.spec;
     await Promise.all(
-      VARIANT_DIRECTIONS.map(async (d) => {
+      VARIANT_DIRECTIONS.map(async (d, i) => {
         try {
-          const data = await callChat({ project, section: next, action: "regenerate", direction: d.id }, TIMEOUTS.designing);
+          if (i > 0) await new Promise((r) => setTimeout(r, CACHE_HEAD_START_MS));
+          const data = await callChat({ project, section: next, action: "regenerate", direction: d.id, premium }, TIMEOUTS.designing);
           if (data.type !== "variants") throw new Error("Unexpected reply from the server.");
           spec = data.spec;
           for (const v of data.variants) {
@@ -263,7 +294,7 @@ export function Workspace({ sectionId }: { sectionId: string }) {
 
   const send = async (opts: { action?: "auto" | "regenerate"; overrideText?: string } = {}) => {
     const body = (opts.overrideText ?? text).trim();
-    if (busy || (!body && !images.length && opts.action !== "regenerate")) return;
+    if (busy || overAllowance || (!body && !images.length && opts.action !== "regenerate")) return;
     let next = section;
     if (opts.action !== "regenerate" || body) {
       const user = msg("user", body || "(reference images)", { images: images.length ? images : undefined, links: extractLinks(body), focusNodeId: focus });
@@ -287,6 +318,7 @@ export function Workspace({ sectionId }: { sectionId: string }) {
           action: "auto",
           scene: refining ? workingScene.current : undefined,
           focusNodeId: refining ? focus : undefined,
+          premium,
         },
         TIMEOUTS[stage],
       );
@@ -395,6 +427,11 @@ export function Workspace({ sectionId }: { sectionId: string }) {
             )}
           </div>
 
+          {allowanceLevel(allowance) !== "ok" && allowanceLevel(allowance) !== "none" && (
+            <div className="border-t border-slate-200 bg-slate-50 px-3 pt-3">
+              <AllowanceNotice allowance={allowance} />
+            </div>
+          )}
           <form
             className="border-t border-slate-200 bg-slate-50 p-3"
             onSubmit={(e) => {
@@ -455,11 +492,19 @@ export function Workspace({ sectionId }: { sectionId: string }) {
                 <Button type="button" variant="ghost" className="px-2 py-1 text-xs" onClick={() => fileRef.current?.click()} disabled={images.length >= 4}>
                   + Images
                 </Button>
-                <span className="sg-label">Paste links in your message</span>
               </div>
-              <Button type="submit" disabled={!!busy || (!text.trim() && !images.length)} className="px-3 py-1.5">
-                Send
-              </Button>
+              <div className="flex shrink-0 items-center gap-3">
+                <label
+                  className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-600"
+                  title="Premium uses Claude Opus for designs and changes. It can give stronger results and costs about twice as much."
+                >
+                  <input type="checkbox" checked={premium} onChange={(e) => setPremiumPref(e.target.checked)} className="accent-amber-700" />
+                  Premium
+                </label>
+                <Button type="submit" disabled={!!busy || overAllowance || (!text.trim() && !images.length)} className="px-3 py-1.5">
+                  Send
+                </Button>
+              </div>
             </div>
           </form>
         </aside>
@@ -485,7 +530,7 @@ export function Workspace({ sectionId }: { sectionId: string }) {
                     </Button>
                   )}
                   {!!section.brief && (
-                    <Button variant="secondary" onClick={() => send({ action: "regenerate" })} disabled={!!busy}>
+                    <Button variant="secondary" onClick={() => send({ action: "regenerate" })} disabled={!!busy || overAllowance}>
                       3 new options
                     </Button>
                   )}
