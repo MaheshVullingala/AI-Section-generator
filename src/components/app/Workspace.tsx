@@ -8,12 +8,17 @@ import { compileScene } from "@/lib/scene/compile";
 import { findNode } from "@/lib/scene/ops";
 import type { Scene } from "@/lib/scene/types";
 import { store } from "@/lib/storage";
-import { VARIANT_DIRECTIONS } from "@/lib/catalog";
+import { INTENSITIES, VARIANT_DIRECTIONS, type Intensity } from "@/lib/catalog";
+import { checkSection } from "@/lib/check";
+import { briefFromEnhanced, type EnhanceResult } from "@/lib/refine/brief";
+import { type EditIntent, type EditMeta, rebasePatch, type SceneDiff, type ScenePatch, type ValidationCheck } from "@/lib/refine/edit";
 import { uid } from "@/lib/tokens";
 import type { Allowance, ChatImage, ChatMessage, Project, SavedSection, Section, SectionSpec, Variant } from "@/lib/types";
 import { makeVersion, SectionEditor } from "../editor/SectionEditor";
 import { Preview } from "../Preview";
 import { Button, Card, Waveform, cx } from "../ui";
+import { useSession } from "./AuthGate";
+import { EnhanceCard, type EnhanceState } from "./EnhanceCard";
 import { Shell } from "./Shell";
 import { AllowanceNotice } from "./Usage";
 
@@ -22,7 +27,21 @@ type ChatResponse =
   | { type: "questions"; message: string; questions: string[] }
   | { type: "brief"; message: string; brief: Record<string, unknown>; spec: SectionSpec; title?: string }
   | { type: "variants"; message: string; variants: VariantResult[]; brief?: Record<string, unknown>; spec: SectionSpec; title?: string }
-  | { type: "refined"; message: string; scene: Scene; html: string; css: string; js: string; issues: string[] };
+  | {
+      type: "refined";
+      message: string;
+      scene: Scene;
+      html: string;
+      css: string;
+      js: string;
+      issues: string[];
+      edit: EditIntent;
+      diff: SceneDiff;
+      patch: ScenePatch;
+      validation: ValidationCheck[];
+      model: string;
+      usage: EditMeta["usage"];
+    };
 
 const STARTERS = [
   "A pricing section with 3 plans and a monthly/yearly toggle",
@@ -94,6 +113,18 @@ async function callChat(payload: { section: Section } & Record<string, unknown>,
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function callEnhance(payload: Record<string, unknown>): Promise<EnhanceState & { usage?: unknown }> {
+  const res = await fetch("/api/enhance", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+    body: JSON.stringify(payload),
+  });
+  const data = (await res.json().catch(() => ({}))) as { error?: string; allowance?: Allowance } & Omit<EnhanceState, "original">;
+  publishAllowance(data.allowance);
+  if (!res.ok || data.error) throw new Error(data.error || `Request failed (${res.status}).`);
+  return { ...data, original: String(payload.prompt ?? "") };
 }
 
 /** Seconds since the component mounted, updated every second. */
@@ -200,6 +231,11 @@ export function Workspace({ sectionId }: { sectionId: string }) {
       localStorage.setItem(PREMIUM_KEY, on ? "1" : "0");
     } catch {}
   };
+  const session = useSession();
+  /** Minimal / Balanced / Expressive, applied to all 3 designs. */
+  const [intensity, setIntensity] = useState<Intensity>("balanced");
+  const [enhance, setEnhance] = useState<EnhanceState | null>(null);
+  const [enhancing, setEnhancing] = useState(false);
   const workingScene = useRef<Scene | undefined>(undefined);
   const listRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -212,6 +248,7 @@ export function Workspace({ sectionId }: { sectionId: string }) {
       if (!live) return;
       setSection(s);
       setProject(p);
+      if (s?.spec.intensity) setIntensity(s.spec.intensity);
     })();
     return () => {
       live = false;
@@ -299,8 +336,12 @@ export function Workspace({ sectionId }: { sectionId: string }) {
     if (opts.action !== "regenerate" || body) {
       const user = msg("user", body || "(reference images)", { images: images.length ? images : undefined, links: extractLinks(body), focusNodeId: focus });
       next = { ...section, messages: [...section.messages, user] };
-      await persist(next);
     }
+    if (!hasDesign) next = { ...next, spec: { ...next.spec, intensity } };
+    if (next !== section) await persist(next);
+    setEnhance(null);
+    const baseVersion = next.versions.length;
+    const baseScene = workingScene.current;
     setText("");
     setImages([]);
     const refining = hasDesign && view === "editor" && opts.action !== "regenerate";
@@ -334,13 +375,101 @@ export function Workspace({ sectionId }: { sectionId: string }) {
         const q = data.questions.length ? `\n${data.questions.map((x) => `• ${x}`).join("\n")}` : "";
         await persist({ ...next, messages: [...next.messages, msg("assistant", data.message + q, { kind: "questions" })] });
       } else if (data.type === "refined") {
-        const v = makeVersion({ html: data.html, css: data.css, js: data.js }, (focus ? `${focusName}: ` : "") + (body || "Chat change"), data.issues, data.scene);
-        await persist({
-          ...next,
-          versions: [...next.versions, v],
-          messages: [...next.messages, msg("assistant", `${data.message}\nSaved as v${next.versions.length + 1}.`, { kind: "refined" })],
-        });
+        await saveRefinement(next, data, { body, baseVersion, baseScene });
       }
+    } catch (e) {
+      await persist({ ...next, messages: [...next.messages, msg("assistant", e instanceof Error ? e.message : String(e), { kind: "error" })] });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Saves a chat change as a new version with how it was read and checked. If a teammate
+   * saved a newer version meanwhile, the change is re-applied on top of theirs when the two
+   * touched different elements; otherwise nothing is overwritten and the person is told.
+   */
+  const saveRefinement = async (next: Section, data: Extract<ChatResponse, { type: "refined" }>, ctx: { body: string; baseVersion: number; baseScene?: Scene }) => {
+    const latest = (await store.getSection(next.id).catch(() => null)) ?? next;
+    const theirsAhead = latest.versions.length > ctx.baseVersion;
+    let scene = data.scene;
+    let code: { html: string; css: string; js: string } = data;
+    let issues = data.issues;
+    let base = next;
+    if (theirsAhead) {
+      const latestScene = latest.versions[latest.versions.length - 1]?.scene;
+      const rebased = ctx.baseScene && latestScene ? rebasePatch(ctx.baseScene, latestScene, data.patch) : ({ ok: false, conflicts: ["the whole section"] } as const);
+      // Keep any messages either side added.
+      const known = new Set(latest.messages.map((m) => m.id));
+      base = { ...latest, messages: [...latest.messages, ...next.messages.filter((m) => !known.has(m.id))] };
+      if (!rebased.ok) {
+        const note = `Someone saved v${latest.versions.length} while I was working, and it changed ${rebased.conflicts.slice(0, 3).join(", ")} too. I didn't apply my change so their work isn't lost. Ask again to apply it to the new version.`;
+        await persist({ ...base, messages: [...base.messages, msg("assistant", note, { kind: "error" })] });
+        return;
+      }
+      scene = rebased.scene;
+      code = compileScene(scene, { rootClass: next.id });
+      issues = checkSection(code, next.id, next.spec);
+    }
+    const meta: EditMeta = {
+      originalInstruction: ctx.body,
+      edit: data.edit,
+      diff: data.diff,
+      validation: data.validation,
+      baseVersion: ctx.baseVersion,
+      ...(theirsAhead ? { rebased: true } : {}),
+      author: session?.user.email ?? undefined,
+      model: data.model,
+      usage: data.usage,
+    };
+    const v = { ...makeVersion(code, (focus ? `${focusName}: ` : "") + (ctx.body || "Chat change"), issues, scene), meta };
+    const warnings = data.validation.filter((c) => !c.ok && c.detail && c.name === "brand").map((c) => c.detail);
+    const lines = [
+      data.message,
+      warnings.length ? `Heads up: ${warnings.join("; ")}.` : "",
+      `Saved as v${base.versions.length + 1}${theirsAhead ? ", on top of a teammate's newer version" : ""}.`,
+    ].filter(Boolean);
+    await persist({ ...base, versions: [...base.versions, v], messages: [...base.messages, msg("assistant", lines.join("\n"), { kind: "refined" })] });
+  };
+
+  /** Enhance Prompt: asks for a refined brief of what's in the composer. */
+  const runEnhance = async (avoid?: string[]) => {
+    const prompt = (avoid ? enhance?.original : text)?.trim();
+    if (!prompt || enhancing || busy) return;
+    setEnhancing(true);
+    try {
+      const data = await callEnhance({ project, prompt, intensity, imageCount: images.length, linkCount: extractLinks(prompt).length, avoid });
+      setEnhance({ original: prompt, result: data.result, quality: data.quality, intent: data.intent });
+    } catch (e) {
+      await persist({ ...section, messages: [...section.messages, msg("assistant", e instanceof Error ? e.message : String(e), { kind: "error" })] });
+    } finally {
+      setEnhancing(false);
+    }
+  };
+
+  /** Generates the 3 designs straight from the accepted brief (no separate brief step). */
+  const acceptEnhanced = async (result: EnhanceResult) => {
+    if (busy) return;
+    const original = enhance?.original ?? text;
+    const user = msg("user", original, { images: images.length ? images : undefined, links: extractLinks(original) });
+    const title = section.title.startsWith("Section ") || section.title === "Quick section" || section.title === "Untitled section" ? result.refinedBrief.title : section.title;
+    const accepted = result.suggestions.filter((s) => s.status === "accepted").length;
+    const reply = `Using your enhanced brief${accepted ? ` with ${accepted} of my idea${accepted > 1 ? "s" : ""}` : ""}: ${result.refinedBrief.summary}`;
+    const next: Section = {
+      ...section,
+      title,
+      brief: briefFromEnhanced(result),
+      enhancement: { originalPrompt: original, result, intensity, acceptedAt: Date.now() },
+      spec: { ...section.spec, intensity },
+      messages: [...section.messages, user, msg("assistant", reply, { kind: "text" })],
+    };
+    await persist(next);
+    setEnhance(null);
+    setText("");
+    setImages([]);
+    setBusy("designing");
+    try {
+      await showDesigns(next);
     } catch (e) {
       await persist({ ...next, messages: [...next.messages, msg("assistant", e instanceof Error ? e.message : String(e), { kind: "error" })] });
     } finally {
@@ -447,6 +576,27 @@ export function Workspace({ sectionId }: { sectionId: string }) {
                 </button>
               </div>
             )}
+            {!hasDesign && (
+              <div className="mb-2 flex items-center gap-2" role="radiogroup" aria-label="Creative intensity">
+                <span className="sg-label text-slate-500">Intensity</span>
+                {INTENSITIES.map((lvl) => (
+                  <button
+                    key={lvl.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={intensity === lvl.id}
+                    title={lvl.brief}
+                    onClick={() => setIntensity(lvl.id)}
+                    className={cx(
+                      "rounded border px-2 py-0.5 font-mono text-[11px] uppercase tracking-wider transition",
+                      intensity === lvl.id ? "border-indigo-600 bg-indigo-50 text-indigo-700" : "border-slate-300 text-slate-600 hover:border-slate-400",
+                    )}
+                  >
+                    {lvl.label}
+                  </button>
+                ))}
+              </div>
+            )}
             {!!images.length && (
               <div className="mb-2 flex flex-wrap gap-2">
                 {images.map((img, i) => (
@@ -493,7 +643,7 @@ export function Workspace({ sectionId }: { sectionId: string }) {
                   + Images
                 </Button>
               </div>
-              <div className="flex shrink-0 items-center gap-3">
+              <div className="flex shrink-0 items-center gap-2">
                 <label
                   className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-600"
                   title="Premium uses Claude Opus for designs and changes. It can give stronger results and costs about twice as much."
@@ -501,8 +651,20 @@ export function Workspace({ sectionId }: { sectionId: string }) {
                   <input type="checkbox" checked={premium} onChange={(e) => setPremiumPref(e.target.checked)} className="accent-amber-700" />
                   Premium
                 </label>
-                <Button type="submit" disabled={!!busy || overAllowance || (!text.trim() && !images.length)} className="px-3 py-1.5">
-                  Send
+                {!hasDesign && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="px-3 py-1.5"
+                    onClick={() => runEnhance()}
+                    disabled={!!busy || enhancing || overAllowance || !text.trim()}
+                    title="Turn your prompt into a structured creative brief you can edit before generating"
+                  >
+                    {enhancing ? "Enhancing…" : "Enhance"}
+                  </Button>
+                )}
+                <Button type="submit" disabled={!!busy || enhancing || overAllowance || (!text.trim() && !images.length)} className="px-3 py-1.5">
+                  {!hasDesign && !section.messages.length ? "Generate" : "Send"}
                 </Button>
               </div>
             </div>
@@ -536,7 +698,20 @@ export function Workspace({ sectionId }: { sectionId: string }) {
                   )}
                 </div>
               </div>
-              {busy === "designing" || (busy === "thinking" && !section.variants.length) ? (
+              {enhance && !busy ? (
+                <EnhanceCard
+                  state={enhance}
+                  busy={enhancing}
+                  onChange={(result) => setEnhance({ ...enhance, result })}
+                  onAccept={() => acceptEnhanced(enhance.result)}
+                  onRegenerate={() => runEnhance(enhance.result.suggestions.map((s) => s.description))}
+                  onRevert={() => {
+                    setText(enhance.original);
+                    setEnhance(null);
+                  }}
+                  onSkip={() => send({ overrideText: enhance.original })}
+                />
+              ) : busy === "designing" || (busy === "thinking" && !section.variants.length) ? (
                 <div className="grid gap-4 xl:grid-cols-3">
                   {partial.map((v) => (
                     <VariantCard key={v.id} variant={v} project={project} section={section} disabled />

@@ -30,6 +30,8 @@ export async function POST(request: Request) {
   const usage = usageRecorder(member, { sectionId: rootClass, premium });
   try {
     const result = await refineDesign({ ds: designSystem, spec, rootClass, scene, instruction, focusNodeId, premium, onUsage: usage.onUsage });
+    // The editor panel has no chat to answer in, so a clarifying question comes back as the error text.
+    if (result.type === "question") return Response.json({ error: result.question, allowance: await usage.flush() }, { status: 422 });
     return Response.json({ ...result, allowance: await usage.flush() });
   } catch (err) {
     const { message, status } = errorMessage(err);

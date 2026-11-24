@@ -324,6 +324,21 @@ export function SectionEditor({
                   className={cx("w-full rounded-md px-2 py-1.5 text-left text-sm", i === versionIdx ? "bg-indigo-50 text-indigo-800" : "text-slate-700 hover:bg-slate-50")}
                 >
                   <span className="font-medium">v{i + 1}</span> · {v.instruction}
+                  {v.meta && (
+                    <span
+                      className="sg-label ml-1.5 rounded bg-slate-100 px-1 text-slate-500"
+                      title={[
+                        v.meta.edit.intent,
+                        `${v.meta.diff.changed.length} changed, ${v.meta.diff.added.length} added, ${v.meta.diff.removed.length} removed`,
+                        v.meta.edit.viewports.includes("all") ? "" : `Only: ${v.meta.edit.viewports.join(", ")}`,
+                        v.meta.author ? `By ${v.meta.author}` : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    >
+                      {v.meta.edit.category}
+                    </span>
+                  )}
                 </button>
               </li>
             ))}

@@ -1,3 +1,6 @@
+import type { Intensity } from "./catalog";
+import type { EnhanceRecord } from "./refine/brief";
+import type { EditMeta } from "./refine/edit";
 import type { Scene } from "./scene/types";
 
 export interface Breakpoint {
@@ -63,6 +66,8 @@ export interface SectionSpec {
     darkMode: boolean;
   };
   breakpoints: Breakpoint[];
+  /** Creative intensity for all 3 designs (Minimal / Balanced / Expressive). Absent means balanced. */
+  intensity?: Intensity;
 }
 
 export interface SectionCode {
@@ -87,6 +92,8 @@ export interface SectionVersion extends SectionCode {
   instruction: string; // what produced this version
   issues?: string[]; // results of the static quality check
   createdAt: number;
+  /** How a chat change was read, what it touched and how it was checked. Absent on manual saves and older versions. */
+  meta?: EditMeta;
 }
 
 export interface SavedSection {
@@ -145,6 +152,8 @@ export interface Section extends SavedSection {
   variants: Variant[];
   /** The brief Claude assembled from the chat, once it had enough to design. */
   brief?: Record<string, unknown>;
+  /** The Enhance Prompt result the person accepted, kept so the brief can be traced back to their words. */
+  enhancement?: EnhanceRecord;
 }
 
 /** A person's Claude allowance for the current month (from section_gen.my_allowance()). */

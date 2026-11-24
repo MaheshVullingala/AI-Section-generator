@@ -1,6 +1,6 @@
 import type { Scene } from "./scene/types";
 import type { DesignSystem, Project, SectionSpec } from "./types";
-import { INTERACTIONS, interactionGuidance } from "./catalog";
+import { INTENSITIES, INTERACTIONS, interactionGuidance } from "./catalog";
 import { tokenVariables } from "./tokens";
 
 /** Stable system prompt, kept identical across requests so it can be cached. */
@@ -83,6 +83,11 @@ ${list(vars) || "  (none provided: choose a restrained neutral palette and defin
 ${ds.brandNotes ? `\nBrand notes and rules:\n${ds.brandNotes}` : ""}`;
 }
 
+function intensityLine(spec: SectionSpec): string {
+  const level = INTENSITIES.find((i) => i.id === spec.intensity);
+  return level && level.id !== "balanced" ? `\nCREATIVE INTENSITY: ${level.label}. Apply it on top of the creative direction. ${level.brief}\n` : "";
+}
+
 export function specBlock(spec: SectionSpec, rootClass: string): string {
   const answers = Object.entries(spec.answers)
     .filter(([, v]) => v && v.trim())
@@ -114,6 +119,7 @@ INTERACTIONS
 - You may add one or two further interactions from that guidance if they clearly help this section's goal.
 
 BREAKPOINTS (design for each): ${bps}
+${intensityLine(spec)}
 
 CONSTRAINTS
 - Accessibility target: ${spec.constraints.accessibility}
@@ -153,7 +159,13 @@ ${instruction}
 Apply the change request to the current scene. Keep node ids stable, keep everything the request does not ask to change, and keep every existing behavior working.
 
 RESPONSE FORMAT FOR CHANGES (use this instead of the format above)
-Return only what changed, so the response stays short:
+First classify the request:
+<edit>{"intent": "what the person wants, in one short sentence", "category": "content | appearance | interaction | structure", "scope": "selected-element | component-group | section", "viewports": ["all"] or the breakpoint names the request is limited to (e.g. ["Mobile"]), "targetNodeIds": ["ids of the nodes you will change"]}</edit>
+- content: headings, descriptions, labels, CTA copy. appearance: typography, spacing, colours, backgrounds, alignment, hierarchy. interaction: click, hover, animation, transitions, interactive states and behaviors. structure: rearranging, adding or removing elements, layout, mobile composition.
+- Use viewports only when the person names screen sizes ("on mobile", "on desktop"). Then change only styles: the effective style at every other breakpoint must stay exactly as it is (styles cascade mobile-first: base, then each min-width override in style.responsive up to that width). For example, to stack a row on Mobile only, set the new value in base and set the current value in the next breakpoint's override.
+- If the request is genuinely ambiguous (you can't tell which element it means and a guess could change the wrong thing), reply with only the <edit> tag and <question>one short, specific question</question>, and no patch. Don't ask when a sensible reading exists.
+
+Then return only what changed, so the response stays short:
 <rationale>One or two sentences on what you changed.</rationale>
 <patch>{"nodes": [ ...each changed node as a complete node object, including all of its children... ], "customCss": "only include this key if customCss changed; give the complete new value"}</patch>
 
