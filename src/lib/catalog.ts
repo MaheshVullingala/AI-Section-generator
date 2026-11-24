@@ -174,3 +174,29 @@ export const VARIANT_DIRECTIONS = [
       "Lead with interactivity: the requested interactions are the centrepiece of the experience, and you add the most fitting extra interaction from the business guidance. Motion level: rich. Layered micro-interactions, state changes that animate smoothly, and content that rewards exploration, while staying fast, keyboard friendly and fully usable with reduced motion.",
   },
 ];
+
+/**
+ * Creative intensity, picked before generating. It tunes all 3 directions at once:
+ * a Minimal "Interaction-forward" design still leads with interaction, just calmly.
+ */
+export const INTENSITIES = [
+  {
+    id: "minimal",
+    label: "Minimal",
+    brief:
+      "Restrained. Fewer elements, generous whitespace, a quiet type scale and a limited palette. Motion is limited to subtle hover and focus feedback and at most one gentle reveal. Add no interactions beyond the requested ones.",
+  },
+  {
+    id: "balanced",
+    label: "Balanced",
+    brief: "Balanced. Use the motion and density each creative direction describes.",
+  },
+  {
+    id: "expressive",
+    label: "Expressive",
+    brief:
+      "Turned up. Bolder typographic contrast, a more dramatic composition, richer layered motion and micro-interactions, and one standout interactive moment. Stay on-brand, fast, keyboard friendly and fully usable with reduced motion.",
+  },
+] as const;
+export type Intensity = (typeof INTENSITIES)[number]["id"];
+export const isIntensity = (v: unknown): v is Intensity => INTENSITIES.some((i) => i.id === v);

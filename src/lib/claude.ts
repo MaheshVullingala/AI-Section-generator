@@ -18,6 +18,8 @@ export const GENERATE_MODEL = process.env.CLAUDE_GENERATE_MODEL || "claude-sonne
 export const REFINE_MODEL = process.env.CLAUDE_REFINE_MODEL || "claude-sonnet-5-5";
 export const PREMIUM_MODEL = process.env.CLAUDE_PREMIUM_MODEL || "claude-opus-5-5";
 export const BRIEF_MODEL = process.env.CLAUDE_BRIEF_MODEL || "claude-haiku-5-5";
+/** Enhance Prompt is a light, structured rewrite, so it runs on the brief model unless set separately. */
+export const ENHANCE_MODEL = process.env.CLAUDE_ENHANCE_MODEL || BRIEF_MODEL;
 /** Briefs that need to open reference links use this model, since web fetch with filtering needs Sonnet or Opus. */
 export const BRIEF_WEB_MODEL = process.env.CLAUDE_BRIEF_WEB_MODEL || "claude-sonnet-5-5";
 /** Set CLAUDE_PREMIUM_ENABLED=false to hide the premium option on a server. */

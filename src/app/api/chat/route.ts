@@ -80,8 +80,12 @@ export async function POST(request: Request) {
         premium,
         onUsage: usage.onUsage,
       });
+      if (result.type === "question") {
+        log("asked which element");
+        return reply({ type: "questions", message: result.question, questions: [], edit: result.edit });
+      }
       log("refined");
-      return reply({ type: "refined", message: result.rationale || "Done. I've updated the design.", ...result });
+      return reply({ ...result, type: "refined", message: result.rationale || "Done. I've updated the design." });
     }
 
     // Regenerate from the existing brief.
