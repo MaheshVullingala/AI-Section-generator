@@ -12,15 +12,32 @@ export function getClient(): Anthropic {
   return client;
 }
 
-// Opus writes the first 3 designs; the cheaper Sonnet handles the brief chat and refinements.
-export const GENERATE_MODEL = process.env.CLAUDE_GENERATE_MODEL || "claude-opus-5-5";
+// Model routing. Sonnet writes the designs and refinements, Haiku writes the brief,
+// and Opus is the optional "premium" mode for designs and refinements. All env-configurable.
+export const GENERATE_MODEL = process.env.CLAUDE_GENERATE_MODEL || "claude-sonnet-5-5";
 export const REFINE_MODEL = process.env.CLAUDE_REFINE_MODEL || "claude-sonnet-5-5";
-export const BRIEF_MODEL = process.env.CLAUDE_BRIEF_MODEL || "claude-sonnet-5-5";
-type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+export const PREMIUM_MODEL = process.env.CLAUDE_PREMIUM_MODEL || "claude-opus-5-5";
+export const BRIEF_MODEL = process.env.CLAUDE_BRIEF_MODEL || "claude-haiku-5-5";
+/** Briefs that need to open reference links use this model, since web fetch with filtering needs Sonnet or Opus. */
+export const BRIEF_WEB_MODEL = process.env.CLAUDE_BRIEF_WEB_MODEL || "claude-sonnet-5-5";
+/** Set CLAUDE_PREMIUM_ENABLED=false to hide the premium option on a server. */
+export const PREMIUM_ENABLED = process.env.CLAUDE_PREMIUM_ENABLED !== "false";
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 export const GENERATE_EFFORT = (process.env.CLAUDE_GENERATE_EFFORT || "medium") as Effort;
 export const REFINE_EFFORT = (process.env.CLAUDE_REFINE_EFFORT || "medium") as Effort;
 
-// USD per million tokens: [input, output, cache read, cache write (5 min)]. Only used for the cost estimate in the logs.
+/** The model for designs or refinements, given whether the person turned on premium. */
+export function designModel(kind: "generate" | "refine", premium?: boolean): string {
+  if (premium && PREMIUM_ENABLED) return PREMIUM_MODEL;
+  return kind === "generate" ? GENERATE_MODEL : REFINE_MODEL;
+}
+
+/** Haiku has no server-side refusal fallback, so a declined Haiku request is retried once on this model. */
+const HAIKU_FALLBACK_MODEL = "claude-sonnet-5-5";
+const isHaiku = (model: string) => model.startsWith("claude-haiku");
+
+// USD per million tokens: [input, output, cache read, cache write (5 min)], checked against
+// Anthropic's published prices in November 2026. Used for the usage log and the cost estimate.
 const PRICES: Record<string, [number, number, number, number]> = {
   "claude-opus-5-5": [4, 20, 0.2, 5],
   "claude-opus-5": [5, 25, 0.5, 6.25],
@@ -29,20 +46,41 @@ const PRICES: Record<string, [number, number, number, number]> = {
   "claude-sonnet-5": [2, 10, 0.2, 2.5],
   "claude-haiku-5-5": [0.1, 0.5, 0.01, 0.125],
 };
+// Claude Haiku 5.5 charges a higher rate when the prompt is over 100K tokens.
+const HAIKU_LONG: [number, number, number, number] = [0.5, 2.5, 0.05, 0.625];
 
-/** Logs one line per Claude call with its token counts and an estimated cost. */
-function logUsage(label: string, message: Anthropic.Beta.BetaMessage, seconds: number) {
+export interface CallUsage {
+  model: string;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  /** Estimated USD, or null for a model without a known price. */
+  cost: number | null;
+}
+
+/** Token counts from a response and their estimated cost. */
+export function usageOf(message: Anthropic.Beta.BetaMessage): CallUsage {
   const u = message.usage;
   const input = u.input_tokens ?? 0;
   const output = u.output_tokens ?? 0;
   const cacheRead = u.cache_read_input_tokens ?? 0;
   const cacheWrite = u.cache_creation_input_tokens ?? 0;
-  const price = PRICES[message.model];
+  const prompt = input + cacheRead + cacheWrite;
+  const price = message.model.startsWith("claude-haiku-5-5") && prompt > 100_000 ? HAIKU_LONG : PRICES[message.model];
   const cost = price ? (input * price[0] + output * price[1] + cacheRead * price[2] + cacheWrite * price[3]) / 1e6 : null;
+  return { model: message.model, input, output, cacheRead, cacheWrite, cost };
+}
+
+/** Logs one line per Claude call with its token counts and an estimated cost. */
+function logUsage(label: string, message: Anthropic.Beta.BetaMessage, seconds: number): CallUsage {
+  const usage = usageOf(message);
+  const { input, output, cacheRead, cacheWrite, cost } = usage;
   console.log(
     `[claude] ${label} model=${message.model} in=${input} cache_read=${cacheRead} cache_write=${cacheWrite} out=${output}` +
       ` stop=${message.stop_reason} ${seconds.toFixed(1)}s${cost != null ? ` ~$${cost.toFixed(4)}` : ""}`,
   );
+  return usage;
 }
 
 export class ClaudeRefusal extends Error {}
@@ -64,8 +102,14 @@ export function imagesFromDataUrls(urls: string[]): PromptImage[] {
 
 /**
  * Streams a request and returns the final text.
- * Server-side fallbacks re-run the request on another model if a safety
- * classifier declines it (a false positive is possible on design prompts).
+ *
+ * Prompt caching: the system prompt and `cachedPrompt` (the design system and brief,
+ * which repeat across the 3 designs and across refinements) sit before a cache
+ * breakpoint; only `prompt` changes from request to request.
+ *
+ * Refusals: Sonnet and Opus use server-side fallbacks, which re-run the request on
+ * another model if a safety classifier declines it (a false positive is possible on
+ * design prompts). Haiku has no server-side fallback, so it is retried here on Sonnet.
  * With webFetch, Claude can open reference links the user shared.
  */
 export async function complete(opts: {
@@ -74,18 +118,38 @@ export async function complete(opts: {
   model: string;
   effort: Effort;
   system: string;
+  /** Stable context that repeats across requests. Cached. */
+  cachedPrompt?: string;
   prompt: string;
   images?: PromptImage[];
+  /** true: images go before the cache breakpoint (they repeat across the 3 designs). Default: after it. */
+  cacheImages?: boolean;
   webFetch?: boolean;
   maxTokens?: number;
+  /** Receives the token usage of every API call this request makes. */
+  onUsage?: (usage: CallUsage) => void;
 }): Promise<string> {
+  try {
+    return await run(opts);
+  } catch (err) {
+    if (!(err instanceof ClaudeRefusal) || !isHaiku(opts.model)) throw err;
+    console.log(`[claude] ${opts.label} declined on ${opts.model}; retrying on ${HAIKU_FALLBACK_MODEL}`);
+    return run({ ...opts, model: HAIKU_FALLBACK_MODEL });
+  }
+}
+
+async function run(opts: Parameters<typeof complete>[0]): Promise<string> {
+  const imageBlocks = (opts.images ?? []).map(
+    (img): Anthropic.Beta.BetaContentBlockParam => ({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } }),
+  );
   const content: Anthropic.Beta.BetaContentBlockParam[] = [
-    ...(opts.images ?? []).map(
-      (img): Anthropic.Beta.BetaContentBlockParam => ({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } }),
-    ),
+    ...(opts.cacheImages ? imageBlocks : []),
+    ...(opts.cachedPrompt ? [{ type: "text" as const, text: opts.cachedPrompt, cache_control: { type: "ephemeral" as const } }] : []),
+    ...(opts.cacheImages ? [] : imageBlocks),
     { type: "text", text: opts.prompt },
   ];
   const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content }];
+  const haiku = isHaiku(opts.model);
   let text = "";
   // A server tool (web fetch) can pause a long turn; resume it a few times.
   for (let turn = 0; turn < 4; turn++) {
@@ -93,8 +157,8 @@ export async function complete(opts: {
     const stream = getClient().beta.messages.stream({
       model: opts.model,
       max_tokens: opts.maxTokens ?? 64000,
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
+      // Haiku has no server-side fallback (a fallback list is rejected), so complete() retries it instead.
+      ...(haiku ? {} : { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }),
       output_config: { effort: opts.effort },
       // The system prompt is identical across requests, so cache it.
       system: [{ type: "text", text: opts.system, cache_control: { type: "ephemeral" } }],
@@ -102,7 +166,8 @@ export async function complete(opts: {
       messages,
     });
     const message = await stream.finalMessage();
-    logUsage(turn ? `${opts.label} (turn ${turn + 1})` : opts.label, message, (Date.now() - started) / 1000);
+    const usage = logUsage(turn ? `${opts.label} (turn ${turn + 1})` : opts.label, message, (Date.now() - started) / 1000);
+    opts.onUsage?.(usage);
     if (message.stop_reason === "refusal") {
       throw new ClaudeRefusal("Claude declined this request. Try rephrasing it.");
     }

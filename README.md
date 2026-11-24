@@ -51,12 +51,21 @@ The app is a standard Next.js server, so it runs on Vercel or on any Node.js hos
 
 ## Models
 
-All Claude calls go through `src/lib/claude.ts`, with server-side refusal fallbacks enabled. By default:
+All Claude calls go through `src/lib/claude.ts`. By default:
 
-- The 3 first designs use `claude-opus-5-5` at `medium` effort.
-- Refinements and the brief chat (questions and brief) use `claude-sonnet-5-5`, at half the price.
+| Job | Model | Env variable |
+|---|---|---|
+| The 3 designs | `claude-sonnet-5-5`, `medium` effort | `CLAUDE_GENERATE_MODEL` |
+| Refinements | `claude-sonnet-5-5`, `medium` effort | `CLAUDE_REFINE_MODEL` |
+| Brief chat (questions and brief) | `claude-haiku-5-5`, `low` effort | `CLAUDE_BRIEF_MODEL` |
+| Brief chat when the message has links to open | `claude-sonnet-5-5` | `CLAUDE_BRIEF_WEB_MODEL` |
+| Designs and refinements with **Premium** ticked | `claude-opus-5-5` | `CLAUDE_PREMIUM_MODEL` |
 
-Override with the `CLAUDE_*` variables in `.env.example`, for example `CLAUDE_REFINE_MODEL=claude-opus-5-5` to refine with Opus again.
+The **Premium** checkbox under the chat box switches designs and refinements to Opus, which costs about twice as much as Sonnet. Set `CLAUDE_PREMIUM_ENABLED=false` to ignore it on a server.
+
+Sonnet and Opus calls use server-side refusal fallbacks. Haiku has none, so a declined Haiku request is retried once on Sonnet.
+
+**Prompt caching.** The system prompt, and the design system plus brief for the section, sit before cache breakpoints. Repeats within 5 minutes are billed at the cache-read rate (5% of the input price on Sonnet 5.5 and Opus 5.5). The 3 designs share the design system, brief and reference images, so the browser starts the 2nd and 3rd designs 6 seconds after the 1st: a cache entry can only be read once the first request has started answering. Refinements of the same section reuse the cached context too. Check `cache_read` in the usage log.
 
 Refinements ask Claude to return only the changed elements (a patch), which the server merges into the current design. Claude can still return a full design when a change reshapes most of it.
 

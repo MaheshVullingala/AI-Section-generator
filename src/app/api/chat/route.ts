@@ -1,4 +1,4 @@
-import { BRIEF_MODEL, complete, errorMessage, imagesFromDataUrls } from "@/lib/claude";
+import { BRIEF_MODEL, BRIEF_WEB_MODEL, complete, errorMessage, imagesFromDataUrls } from "@/lib/claude";
 import { BRIEF_SYSTEM, briefPrompt, specFromBrief } from "@/lib/prompts";
 import type { Scene } from "@/lib/scene/types";
 import { requireMember } from "@/lib/server/auth";
@@ -17,6 +17,8 @@ interface ChatRequest {
   focusNodeId?: string;
   /** With "regenerate": generate only this design direction (see VARIANT_DIRECTIONS). */
   direction?: string;
+  /** Use the premium model (Opus) for designs and refinements. */
+  premium?: boolean;
 }
 
 function tag(text: string, name: string): string {
@@ -45,7 +47,7 @@ export async function POST(request: Request) {
   const denied = await requireMember(request);
   if (denied) return denied;
   const body = (await request.json()) as ChatRequest;
-  const { project, section, action = "auto", scene, focusNodeId, direction } = body;
+  const { project, section, action = "auto", scene, focusNodeId, direction, premium = false } = body;
   if (!project || !section) return Response.json({ error: "project and section are required" }, { status: 400 });
   const last = section.messages[section.messages.length - 1];
   // The client strips older images to keep requests small, leaving empty data URLs.
@@ -67,6 +69,7 @@ export async function POST(request: Request) {
         focusNodeId,
         images: imagesFromDataUrls((last.images ?? []).map((i) => i.dataUrl)),
         webFetch: links.length > 0,
+        premium,
       });
       log("refined");
       return Response.json({ type: "refined", message: result.rationale || "Done. I've updated the design.", ...result });
@@ -75,7 +78,7 @@ export async function POST(request: Request) {
     // Regenerate from the existing brief.
     if (action === "regenerate" && section.brief) {
       const spec = specFromBrief(project, section.brief, section.spec);
-      const variants = await generateVariants(project.designSystem, spec, imagesFromDataUrls(userImages.slice(-4).map((i) => i.dataUrl)), section.id, direction);
+      const variants = await generateVariants(project.designSystem, spec, imagesFromDataUrls(userImages.slice(-4).map((i) => i.dataUrl)), section.id, direction, { premium });
       log(`designed ${direction ?? "all"} (${variants.filter((v) => v.ok).length}/${variants.length} ok)`);
       for (const v of variants) if (!v.ok) console.error(`[chat] ${section.id} ${v.direction} failed: ${v.error}`);
       if (variants.every((v) => !v.ok)) return Response.json({ error: (variants[0] as { error: string }).error }, { status: 502 });
@@ -88,7 +91,8 @@ export async function POST(request: Request) {
     const links = section.messages.flatMap((m) => m.links ?? []);
     const text = await complete({
       label: "brief",
-      model: BRIEF_MODEL,
+      // Haiku writes the brief; a brief that has to open reference links goes to Sonnet.
+      model: links.length > 0 ? BRIEF_WEB_MODEL : BRIEF_MODEL,
       effort: "low",
       system: BRIEF_SYSTEM,
       prompt: briefPrompt(project, transcript(section.messages), links),

@@ -32,6 +32,15 @@ const STARTERS = [
 /** Longest we wait for one chat request before showing an error. Each design is its own request. */
 const TIMEOUTS = { thinking: 3 * 60_000, designing: 6 * 60_000, refining: 6 * 60_000 } as const;
 
+/**
+ * The 2nd and 3rd designs start this long after the 1st. They share the design system,
+ * brief and images with it, and a prompt cache entry can only be read once the first
+ * request has started answering, so a short head start lets them pay the cached rate.
+ */
+const CACHE_HEAD_START_MS = 6_000;
+
+const PREMIUM_KEY = "forma.premium";
+
 /** Claude only sees the newest reference images (see /api/chat), so older ones aren't uploaded. */
 const MAX_SENT_IMAGES = 4;
 
@@ -170,6 +179,21 @@ export function Workspace({ sectionId }: { sectionId: string }) {
   /** Designs that have arrived while the others are still generating. */
   const [partial, setPartial] = useState<Variant[]>([]);
   const [selected, setSelected] = useState<{ id: string; name: string } | null>(null);
+  // Premium (Opus) is off by default and remembered per browser. The composer only
+  // renders after the section loads in the browser, so reading storage here is safe.
+  const [premium, setPremium] = useState(() => {
+    try {
+      return typeof window !== "undefined" && localStorage.getItem(PREMIUM_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const setPremiumPref = (on: boolean) => {
+    setPremium(on);
+    try {
+      localStorage.setItem(PREMIUM_KEY, on ? "1" : "0");
+    } catch {}
+  };
   const workingScene = useRef<Scene | undefined>(undefined);
   const listRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -236,9 +260,10 @@ export function Workspace({ sectionId }: { sectionId: string }) {
     const errors: string[] = [];
     let spec = next.spec;
     await Promise.all(
-      VARIANT_DIRECTIONS.map(async (d) => {
+      VARIANT_DIRECTIONS.map(async (d, i) => {
         try {
-          const data = await callChat({ project, section: next, action: "regenerate", direction: d.id }, TIMEOUTS.designing);
+          if (i > 0) await new Promise((r) => setTimeout(r, CACHE_HEAD_START_MS));
+          const data = await callChat({ project, section: next, action: "regenerate", direction: d.id, premium }, TIMEOUTS.designing);
           if (data.type !== "variants") throw new Error("Unexpected reply from the server.");
           spec = data.spec;
           for (const v of data.variants) {
@@ -287,6 +312,7 @@ export function Workspace({ sectionId }: { sectionId: string }) {
           action: "auto",
           scene: refining ? workingScene.current : undefined,
           focusNodeId: refining ? focus : undefined,
+          premium,
         },
         TIMEOUTS[stage],
       );
@@ -457,6 +483,13 @@ export function Workspace({ sectionId }: { sectionId: string }) {
                 </Button>
                 <span className="sg-label">Paste links in your message</span>
               </div>
+              <label
+                className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-600"
+                title="Premium uses Claude Opus for designs and changes. It can give stronger results and costs about twice as much."
+              >
+                <input type="checkbox" checked={premium} onChange={(e) => setPremiumPref(e.target.checked)} className="accent-amber-600" />
+                Premium
+              </label>
               <Button type="submit" disabled={!!busy || (!text.trim() && !images.length)} className="px-3 py-1.5">
                 Send
               </Button>

@@ -122,26 +122,29 @@ CONSTRAINTS
 - Dark mode support via prefers-color-scheme: ${spec.constraints.darkMode ? "yes" : "no"}`;
 }
 
-export function variantPrompt(ds: DesignSystem, spec: SectionSpec, direction: { label: string; brief: string }): string {
+/**
+ * The context shared by every design and refinement of a section: the design system
+ * and the brief. It goes before the cache breakpoint, so it is billed at the cached
+ * rate when it repeats within a few minutes.
+ */
+export function sectionContext(ds: DesignSystem, spec: SectionSpec): string {
   return `${designSystemBlock(ds)}
 
-${specBlock(spec, "")}
+${specBlock(spec, "")}`;
+}
 
-CREATIVE DIRECTION: ${direction.label}
+export function variantPrompt(direction: { label: string; brief: string }): string {
+  return `CREATIVE DIRECTION: ${direction.label}
 ${direction.brief}
 
 Design this section now as a scene.`;
 }
 
-export function refinePrompt(ds: DesignSystem, spec: SectionSpec, current: Scene, instruction: string, focusNodeId?: string): string {
+export function refinePrompt(current: Scene, instruction: string, focusNodeId?: string): string {
   const focus = focusNodeId
     ? `\nSCOPE\nThe change applies to the node with id "${focusNodeId}" and its children. Do not change anything outside that node unless the request can't be done otherwise.\n`
     : "";
-  return `${designSystemBlock(ds)}
-
-${specBlock(spec, "")}
-
-CURRENT SCENE
+  return `CURRENT SCENE
 <scene>${JSON.stringify(current)}</scene>
 ${focus}
 CHANGE REQUEST
